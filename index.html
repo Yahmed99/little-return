@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#245a45">
+  <title>Little Return — A little time for what you love</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a class="brand" href="./">Little Return<span>A little time for what you love.</span></a></header>
+  <main id="main">
+    <p id="status" role="status" aria-live="polite"></p>
+    <p id="error" role="alert"></p>
+    <noscript>This prototype needs JavaScript to plan and save sessions.</noscript>
+
+    <section id="setup" hidden aria-labelledby="setup-title">
+      <p class="eyebrow">Make room for a small beginning</p>
+      <h1 id="setup-title" tabindex="-1">What would you like to return to?</h1>
+      <p>Choose one or more hobbies. There is no daily streak to keep.</p>
+      <form id="setup-form" class="card">
+        <fieldset><legend>Your hobbies</legend>
+          <label class="choice"><input type="checkbox" name="hobbies" value="drawing"> Drawing</label>
+          <label class="choice"><input type="checkbox" name="hobbies" value="reading"> Reading</label>
+          <label class="choice"><input type="checkbox" name="hobbies" value="journaling"> Journaling</label>
+        </fieldset>
+        <button type="submit">Save hobbies</button>
+        <button type="button" id="cancel-setup" class="secondary" hidden>Cancel</button>
+      </form>
+    </section>
+
+    <section id="home" hidden aria-labelledby="home-title">
+      <p class="eyebrow">Small steps count</p>
+      <h1 id="home-title" tabindex="-1">A little time, just for you.</h1>
+      <p>Pick up a work in progress or make a small new start.</p>
+      <div id="saved" class="saved-grid" aria-label="Saved activities"></div>
+      <form id="plan-form" class="card">
+        <h2>Start a new activity</h2>
+        <div class="columns">
+          <div><label for="hobby">Hobby</label><select id="hobby"></select></div>
+          <div><label for="minutes">Time available (minutes)</label>
+            <input id="minutes" type="number" min="1" max="180" step="1" value="20" required>
+          </div>
+        </div>
+        <label for="materials">Available materials <span>(optional)</span></label>
+        <input id="materials" maxlength="200" placeholder="For example: pencil, paper" aria-describedby="materials-help">
+        <p id="materials-help" class="hint">List what you can use. Try “pencil, paper” or “tablet”.</p>
+        <label for="idea">Something you have in mind <span>(optional)</span></label>
+        <input id="idea" maxlength="200" placeholder="For example: a penguin, a book title, a journal topic">
+        <button type="submit">Suggest a small goal</button>
+      </form>
+      <button id="edit-hobbies" type="button" class="secondary">Edit hobbies</button>
+    </section>
+
+    <section id="goal-screen" hidden aria-labelledby="goal-title">
+      <p class="eyebrow">Your session, your pace</p>
+      <h1 id="goal-title" tabindex="-1">Make the goal your own.</h1>
+      <form id="goal-form" class="card">
+        <p id="goal-context"></p>
+        <label for="goal">Session goal</label>
+        <textarea id="goal" rows="5" maxlength="1200" required></textarea>
+        <p class="hint">Make it smaller, change the subject, or leave room to explore.</p>
+        <button type="submit">Save goal &amp; start</button>
+        <button id="back" type="button" class="secondary">Back to home</button>
+      </form>
+    </section>
+
+    <section id="session" hidden aria-labelledby="session-title">
+      <p class="eyebrow">You made a little room</p>
+      <h1 id="session-title" tabindex="-1">Enjoy your time.</h1>
+      <div class="card">
+        <p id="session-meta" class="hint"></p>
+        <h2>Your saved goal</h2><p id="active-goal" class="preserve"></p>
+        <p>You can stop whenever you need to. Finishing is optional.</p>
+        <form id="progress-form">
+          <label for="note">Where would you like to pick up? <span>(optional)</span></label>
+          <textarea id="note" rows="4" maxlength="2000" placeholder="Outline finished. Next time: add the eyes and wings."></textarea>
+          <div id="photo-controls">
+            <label for="photo">Progress photo <span>(optional)</span></label>
+            <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help">
+            <p id="photo-help" class="hint">JPEG, PNG or WebP, up to 1 MB. You can always save without a photo. A new photo replaces the previous one.</p>
+            <img id="preview" alt="Your saved progress" hidden>
+            <label id="remove-wrap" class="choice" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
+          </div>
+          <button id="save-progress" type="submit">Save progress &amp; return home</button>
+          <button id="leave" type="button" class="secondary">Home without saving changes</button>
+        </form>
+      </div>
+    </section>
+  </main>
+  <footer>Saved on this browser only. Clearing site data removes your progress. Private browsing may not retain it.</footer>
+</body>
+</html>
