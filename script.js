@@ -19,6 +19,9 @@ let cloudReady = false;
 let generation = 0;
 let saving = false;
 let guestCount = 0;
+let timerInterval = null;
+let timerCheckpoint = null;
+let timerWrites = 0;
 const BUCKET = "progress-photos";
 const emptyState = () => ({ hobbies: [], sessions: [] });
 const cacheKey = () => user ? `${KEY}:user:${user.id}` : KEY;
@@ -46,10 +49,25 @@ function readCache(key) {
                 item && typeof item.id === "string" && Object.hasOwn(names, item.hobby) &&
                 ["goal", "note", "materials", "idea"].every(k => typeof item[k] === "string") &&
                 Number.isFinite(item.minutes) && Number.isFinite(item.updated) &&
+                (!item.projectName || (typeof item.projectName === "string" && item.projectName.length <= 120)) &&
+                (!item.taskHistory || (Array.isArray(item.taskHistory) && item.taskHistory.every(task =>
+                    task && typeof task.goal === "string" && typeof task.completedAt === "string"))) &&
+                (!item.elapsedSeconds || (Number.isFinite(item.elapsedSeconds) && item.elapsedSeconds >= 0)) &&
+                (!item.completedAt || typeof item.completedAt === "string") &&
                 (!item.photo || /^data:image\/(jpeg|png|webp);base64,/.test(item.photo)))) {
             throw new Error("Invalid browser data");
         }
-        return data;
+        return {
+            ...data,
+            sessions: data.sessions.map(item => ({
+                ...item,
+                projectName: item.projectName || "",
+                taskHistory: item.taskHistory || [],
+                elapsedSeconds: item.elapsedSeconds || 0,
+                goalCompleted: !!item.goalCompleted,
+                completedAt: item.completedAt || null
+            }))
+        };
     } catch {
         blocked = true;
         say("Browser fallback could not be loaded. It has not been overwritten. Cloud saves can still be used; check browser storage before saving locally.", true);
@@ -66,7 +84,17 @@ function writeCache(next) {
 }
 
 function fromRow(row) {
-    return { ...row, photo: "", updated: Date.parse(row.updated_at), pending: false };
+    return {
+        ...row,
+        photo: "",
+        updated: Date.parse(row.updated_at),
+        projectName: row.project_name || "",
+        taskHistory: row.task_history || [],
+        elapsedSeconds: row.elapsed_seconds || 0,
+        goalCompleted: !!row.goal_completed,
+        completedAt: row.completed_at || null,
+        pending: false
+    };
 }
 
 function inferHobbies() {
@@ -124,8 +152,11 @@ async function persistCloud(session, owner) {
     const path = await uploadPhoto(session, owner);
     const row = {
         id: session.id, user_id: owner.id, hobby: session.hobby, minutes: session.minutes,
-        materials: session.materials, idea: session.idea, goal: session.goal, note: session.note,
-        storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString()
+        materials: session.materials, idea: session.idea, project_name: session.projectName || "",
+        goal: session.goal, note: session.note,
+        storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString(),
+        task_history: session.taskHistory || [], elapsed_seconds: session.elapsedSeconds || 0,
+        goal_completed: !!session.goalCompleted, completed_at: session.completedAt || null
     };
     const { data, error } = await client.from("sessions").upsert(row).select().single();
     // If a response is lost, keep the upload: the database may already reference it.
@@ -184,7 +215,7 @@ function say(message = "", error = false) {
 }
 
 function show(id) {
-    for (const view of ["setup", "home", "goal-screen", "session"]) {
+    for (const view of ["setup", "home", "goal-screen", "session", "goal-done"]) {
         $(view).hidden = view !== id;
     }
 
@@ -220,32 +251,116 @@ function home() {
         (a, b) => b.updated - a.updated
     );
 
-    for (const session of sessions) {
+    for (const session of sessions.filter(item => !item.completedAt)) {
         const card = document.createElement("article");
         card.className = "card";
 
         const title = document.createElement("h2");
         title.textContent =
-        session.idea || `${names[session.hobby]} in progress`;
+        session.projectName || session.idea || `${names[session.hobby]} in progress`;
 
         const note = document.createElement("p");
         note.className = "preserve";
         note.textContent = session.note || session.goal;
 
+        const time = document.createElement("p");
+        time.className = "hint project-time";
+        time.textContent = `${formatTime(session.elapsedSeconds)} tracked · ${session.taskHistory.length} goal${session.taskHistory.length === 1 ? "" : "s"} completed`;
+
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = `Continue ${session.hobby}`;
+        button.textContent = session.goalCompleted ? "Choose what’s next" : `Continue ${session.hobby}`;
 
         button.onclick = () => {
             say();
             openSession(session.id);
         };
 
-        card.append(title, note, button);
+        card.append(title, note, time, button);
         $("saved").append(card);
     }
+    $("saved-empty").hidden = sessions.some(item => !item.completedAt);
+
+    renderCompletedProjects(sessions.filter(item => item.completedAt));
 
     show("home");
+}
+
+function formatTime(seconds = 0) {
+    if (seconds < 60) return `${seconds}s`;
+    const totalMinutes = Math.floor(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return hours ? `${hours}h ${minutes}m` : `${totalMinutes}m`;
+}
+
+function renderCompletedProjects(projects) {
+    const gallery = $("completed-projects");
+    gallery.replaceChildren();
+    for (const project of projects) {
+        const card = document.createElement("article");
+        card.className = "card completed-card";
+        const title = document.createElement("h3");
+        title.textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+        const meta = document.createElement("p");
+        meta.className = "hint";
+        meta.textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} · Completed ${new Date(project.completedAt).toLocaleDateString()}`;
+        const goals = document.createElement("ol");
+        for (const task of project.taskHistory) {
+            const item = document.createElement("li");
+            item.textContent = task.goal;
+            goals.append(item);
+        }
+        card.append(title, meta);
+        if (goals.childElementCount) card.append(goals);
+        if (project.note) {
+            const note = document.createElement("p");
+            note.className = "preserve";
+            note.textContent = project.note;
+            card.append(note);
+        }
+        gallery.append(card);
+    }
+    $("completed-empty").hidden = projects.length > 0;
+}
+
+function updateTimerLabel() {
+    const session = state.sessions.find(item => item.id === activeId);
+    $("timer").textContent = session ? `${formatTime(session.elapsedSeconds)} tracked` : "";
+}
+
+function tickTimer(persist = false) {
+    if (!activeId || timerCheckpoint === null) return;
+    const now = Date.now();
+    const seconds = Math.floor((now - timerCheckpoint) / 1000);
+    if (!seconds) return;
+    timerCheckpoint += seconds * 1000;
+    state.sessions = state.sessions.map(item => item.id === activeId
+        ? { ...item, elapsedSeconds: (item.elapsedSeconds || 0) + seconds, updated: now }
+        : item);
+    timerWrites += seconds;
+    updateTimerLabel();
+    if (persist || timerWrites >= 15) {
+        writeCache(state);
+        timerWrites = 0;
+    }
+}
+
+function startTimer() {
+    stopTimer();
+    timerCheckpoint = Date.now();
+    timerWrites = 0;
+    timerInterval = setInterval(() => tickTimer(), 1000);
+    updateTimerLabel();
+}
+
+function stopTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = null;
+    tickTimer(true);
+    timerCheckpoint = null;
+    timerWrites = 0;
+    return state.sessions.find(item => item.id === activeId);
 }
 
 function recommend(hobby, minutes, materials, idea) {
@@ -356,7 +471,8 @@ $("plan-form").onsubmit = event => {
         hobby: $("hobby").value,
         minutes: Number($("minutes").value),
         materials: $("materials").value.trim(),
-        idea: $("idea").value.trim()
+        idea: $("idea").value.trim(),
+        projectName: $("project-name").value.trim()
     };
 
     $("goal").value = recommend(
@@ -384,12 +500,17 @@ $("goal-form").onsubmit = async event => {
         return;
     }
 
+    const startingNewProject = !draft.id;
     const session = {
         ...draft,
         goal,
         id: draft.id || (draft.id = crypto.randomUUID()),
-        note: "",
-        photo: "",
+        note: draft.note || "",
+        photo: draft.photo || "",
+        taskHistory: draft.taskHistory || [],
+        elapsedSeconds: draft.elapsedSeconds || 0,
+        goalCompleted: false,
+        completedAt: null,
         updated: Date.now()
     };
 
@@ -397,7 +518,10 @@ $("goal-form").onsubmit = async event => {
     button.disabled = true;
     try {
         const result = await saveSession(session);
-        if (result) await openSession(session.id, false);
+        if (result) {
+            if (startingNewProject) $("plan-form").reset();
+            await openSession(session.id, false);
+        }
     } finally { button.disabled = false; }
 };
 
@@ -421,6 +545,10 @@ async function openSession(id, refresh = true) {
     }
     if (epoch !== generation) return;
     activeId = id;
+    if (session.goalCompleted) {
+        showCompletionChoice(session);
+        return;
+    }
     $("active-goal").textContent = session.goal;
     $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
         (session.materials ? ` · ${session.materials}` : "");
@@ -432,6 +560,7 @@ async function openSession(id, refresh = true) {
     $("preview").removeAttribute("src");
     $("remove-wrap").hidden = !(session.photo || session.storage_path);
     show("session");
+    startTimer();
     let url = session.photo;
     if (!url && session.storage_path && owner) {
         try {
@@ -472,6 +601,13 @@ function readPhoto(file) {
     });
 }
 
+function showCompletionChoice(project) {
+    $("done-project-title").textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+    $("done-task").textContent = project.goal;
+    $("done-project-time").textContent = `${formatTime(project.elapsedSeconds)} tracked across this project.`;
+    show("goal-done");
+}
+
 $("progress-form").onsubmit = async event => {
     event.preventDefault();
 
@@ -483,24 +619,13 @@ $("progress-form").onsubmit = async event => {
 
     try {
         const session = state.sessions.find(item => item.id === activeId);
-        let photo = $("remove-photo").checked ? "" : session.photo;
-        const file = $("photo").files[0];
-
-        if (file && !$("remove-photo").checked) {
-            photo = await readPhoto(file);
-        }
+        const captured = await captureProgress(session);
         if (epoch !== generation) return;
-
-        const updated = {
-            ...session,
-            note: $("note").value.trim(),
-            photo,
-            storage_path: $("remove-photo").checked ? null : session.storage_path,
-            updated: Date.now()
-        };
-
+        const timed = stopTimer();
+        const updated = { ...timed, ...captured, updated: Date.now() };
         const result = await saveSession(updated);
         if (result) home();
+        else startTimer();
     } catch (error) {
         say(error.message, true);
     } finally {
@@ -508,6 +633,77 @@ $("progress-form").onsubmit = async event => {
         $("leave").disabled = false;
         button.textContent = "Save progress & return home";
     }
+};
+
+async function captureProgress(session) {
+    let photo = $("remove-photo").checked ? "" : session.photo;
+    const file = $("photo").files[0];
+    if (file && !$("remove-photo").checked) photo = await readPhoto(file);
+    return {
+        note: $("note").value.trim(),
+        photo,
+        storage_path: $("remove-photo").checked ? null : session.storage_path
+    };
+}
+
+$("complete-task").onclick = async () => {
+    const button = $("complete-task");
+    button.disabled = true;
+    try {
+        const epoch = generation;
+        const session = state.sessions.find(item => item.id === activeId);
+        const captured = await captureProgress(session);
+        if (epoch !== generation) return;
+        const timed = stopTimer();
+        const updated = {
+            ...timed,
+            ...captured,
+            taskHistory: [...timed.taskHistory, { goal: timed.goal, completedAt: new Date().toISOString() }],
+            goalCompleted: true,
+            updated: Date.now()
+        };
+        const result = await saveSession(updated);
+        if (!result) { startTimer(); return; }
+        showCompletionChoice(updated);
+    } catch (error) {
+        say(error.message, true);
+    } finally { button.disabled = false; }
+};
+
+$("continue-project").onclick = () => {
+    const project = state.sessions.find(item => item.id === activeId);
+    draft = {
+        id: project.id,
+        hobby: project.hobby,
+        minutes: project.minutes,
+        materials: project.materials,
+        idea: project.idea,
+        projectName: project.projectName,
+        note: project.note,
+        photo: project.photo,
+        storage_path: project.storage_path,
+        taskHistory: project.taskHistory,
+        elapsedSeconds: project.elapsedSeconds
+    };
+    $("goal").value = recommend(draft.hobby, draft.minutes, draft.materials, draft.idea);
+    $("goal-context").textContent = `${draft.projectName || draft.idea || names[draft.hobby]} · Next goal`;
+    say();
+    show("goal-screen");
+};
+
+$("finish-project").onclick = async () => {
+    const button = $("finish-project");
+    button.disabled = true;
+    try {
+        const project = state.sessions.find(item => item.id === activeId);
+        const completed = { ...project, goalCompleted: true, completedAt: new Date().toISOString(), updated: Date.now() };
+        const result = await saveSession(completed);
+        if (result) {
+            activeId = null;
+            home();
+            say("Project completed and added to your gallery.");
+        }
+    } finally { button.disabled = false; }
 };
 
 function hasUnsavedProgress() {
@@ -534,8 +730,11 @@ $("leave").onclick = () => {
         return;
     }
 
-    home();
-    say();
+    const updated = stopTimer();
+    saveSession(updated).then(result => {
+        if (result) { home(); say(); }
+        else startTimer();
+    });
 };
 
 window.addEventListener("beforeunload", event => {
@@ -543,6 +742,18 @@ window.addEventListener("beforeunload", event => {
         event.preventDefault();
         event.returnValue = "";
     }
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden && timerCheckpoint !== null) {
+        stopTimer();
+    } else if (!document.hidden && activeId && !$("session").hidden && timerCheckpoint === null) {
+        startTimer();
+    }
+});
+
+window.addEventListener("pagehide", () => {
+    if (timerCheckpoint !== null) stopTimer();
 });
 
 // Avoid overwriting another tab's fallback changes. Cloud remains authoritative.
@@ -621,6 +832,7 @@ $("import-local").onclick = async () => {
 
 async function changeAccount(nextUser) {
     if ((user?.id || null) === (nextUser?.id || null)) return;
+    if (timerCheckpoint !== null) stopTimer();
     // Preserve the current account's edited notes before an auth change resets the UI.
     if (hasUnsavedProgress()) {
         const session = state.sessions.find(s => s.id === activeId);

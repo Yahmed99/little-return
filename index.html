@@ -49,9 +49,18 @@
       <p class="eyebrow">Small steps count</p>
       <h1 id="home-title" tabindex="-1">A little time, just for you.</h1>
       <p>Pick up a work in progress or make a small new start.</p>
+      <h2>In progress</h2>
       <div id="saved" class="saved-grid" aria-label="Saved activities"></div>
+      <p id="saved-empty" class="hint">No projects in progress.</p>
+      <section class="gallery" aria-labelledby="gallery-title">
+        <h2 id="gallery-title">Completed projects</h2>
+        <p id="completed-empty" class="hint">No completed projects yet.</p>
+        <div id="completed-projects" class="saved-grid" aria-label="Completed projects"></div>
+      </section>
       <form id="plan-form" class="card">
         <h2>Start a new activity</h2>
+        <label for="project-name">Project name <span>(optional)</span></label>
+        <input id="project-name" maxlength="120" placeholder="For example: Watercolor garden">
         <div class="columns">
           <div><label for="hobby">Hobby</label><select id="hobby"></select></div>
           <div><label for="minutes">Time available (minutes)</label>
@@ -86,6 +95,7 @@
       <h1 id="session-title" tabindex="-1">Enjoy your time.</h1>
       <div class="card">
         <p id="session-meta" class="hint"></p>
+        <p id="timer" class="timer" role="timer" aria-live="off">0s tracked</p>
         <h2>Your saved goal</h2><p id="active-goal" class="preserve"></p>
         <p>You can stop whenever you need to. Finishing is optional.</p>
         <form id="progress-form">
@@ -99,8 +109,21 @@
             <label id="remove-wrap" class="choice" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
           </div>
           <button id="save-progress" type="submit">Save progress &amp; return home</button>
-          <button id="leave" type="button" class="secondary">Home without saving changes</button>
+          <button id="complete-task" type="button" class="secondary">Complete this goal</button>
+          <button id="leave" type="button" class="secondary">Return home</button>
         </form>
+      </div>
+    </section>
+
+    <section id="goal-done" hidden aria-labelledby="done-title">
+      <p class="eyebrow">A goal completed</p>
+      <h1 id="done-title" tabindex="-1">What next?</h1>
+      <div class="card">
+        <p id="done-project-title" class="eyebrow"></p>
+        <p id="done-task" class="preserve"></p>
+        <p id="done-project-time" class="hint"></p>
+        <button id="continue-project" type="button">Continue this project with a new goal</button>
+        <button id="finish-project" type="button" class="secondary">Finish project and add to gallery</button>
       </div>
     </section>
   </main>

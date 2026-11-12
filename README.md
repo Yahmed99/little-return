@@ -2,6 +2,8 @@
 
 Plain HTML, CSS, and JavaScript; no build or server application required.
 
+Projects can hold several completed goals. Time is tracked while a project is open and visible, completed goals remain in the project history, and finished projects appear in the completed-project gallery. Existing browser records are treated as in-progress projects. Cloud users should rerun `supabase-setup.sql` to add the project fields; existing rows receive empty history, zero tracked time, and an in-progress status.
+
 1. Create a project at https://supabase.com/dashboard (or use your existing project).
 2. Run `supabase-setup.sql` in its SQL Editor. This creates sessions, all four ownership policies, and a private `progress-photos` bucket with ownership policies and a 1 MB image limit. If reusing a database, audit any existing policies: permissive RLS policies combine with OR.
 3. In `supabase-config.js`, set `url` to the project URL and `anonKey` to its **publishable** (`sb_publishable_…`) or legacy **anon** key. This is public browser configuration, protected by RLS. Never use a secret or service-role key. A static site does not read `.env`; do not serve `.env` or `.git` in production. The existing `.env` was left unchanged.
@@ -21,6 +23,7 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory /tmp/little-return-prev
 Open http://localhost:8000/ (use the same hostname in Supabase redirect settings).
 
 - With the key blank or the CDN blocked, choose hobbies, suggest a goal, save notes/photo, reload, and reopen it. Guest mode should still work.
+- Name a project, start its goal, leave and resume it, and confirm tracked time accumulates without counting time while the page is hidden. Complete a goal and choose both “Continue this project” and “Finish project”; the first should retain the same project and goal history, and the second should place it in the completed gallery.
 - Enter an email and open the magic link. Confirm the account indicator, then import guest progress explicitly. Repeated import should not overwrite existing imported cloud sessions.
 - Create a new cloud session; save notes and a JPEG/PNG/WebP under 1 MB. Reload and reopen it. Confirm the row and `<user-id>/<session-id>/…` object in the dashboard.
 - Sign in on another browser/device: the same sessions and photo should load. Open-session fetches the current database row.
