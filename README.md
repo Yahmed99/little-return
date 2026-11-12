@@ -47,3 +47,7 @@ Official references: [email magic links](https://supabase.com/docs/reference/jav
 ## Validation performed
 
 JavaScript syntax (`node --check script.js`) and patch whitespace checks passed. The app was served over localhost and rendered in Firefox at 375px width. Browser checks passed for guest creation/notes, unchanged goal suggestions, explicit and repeated import, cloud note wiring, offline fallback/retry, account isolation and return, photo upload paths and removal. Supabase calls in these browser checks were mocked; real email delivery, database persistence, RLS, and Storage authorization have **not** been verified against a live project. A valid public key and the applied SQL are required to complete the checklist above. The pinned SDK CDN URL was fetched successfully.
+
+## Task timer
+
+Opening an unfinished goal starts a countdown using its planned minutes. Pause/Resume controls exclude breaks. The timer pauses while the tab is hidden and resumes on return only if it was running. At zero it counts overtime; completion is always your choice. Saving or completing a goal stops the timer and persists the project total through the existing save flow. Completed goals keep time checkpoints in `task_history`, so the next goal gets a fresh countdown without resetting the project's total. No additional database columns are needed. For older goals without a checkpoint, existing tracked time is treated as time on the current goal until it is completed.

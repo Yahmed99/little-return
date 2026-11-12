@@ -15,7 +15,9 @@
   <main id="main">
     <p id="status" role="status" aria-live="polite"></p>
     <p id="error" role="alert"></p>
-    <aside class="card account" aria-label="Cloud account">
+    <details class="account">
+      <summary>Account &amp; sync <span id="account-label" class="account-label">Local only</span></summary>
+      <div class="account-content">
       <p id="sync-status" class="hint" role="status">Local only — not synced to a cloud account.</p>
       <form id="auth-form">
         <label for="email">Pick up your work anywhere</label>
@@ -27,11 +29,11 @@
       <button id="sign-out" type="button" class="secondary" hidden>Sign out</button>
       <button id="import-local" type="button" class="secondary" hidden>Import local progress</button>
       <button id="sync-now" type="button" class="secondary" hidden>Retry cloud sync</button>
-    </aside>
+      </div>
+    </details>
     <noscript>This prototype needs JavaScript to plan and save sessions.</noscript>
 
     <section id="setup" hidden aria-labelledby="setup-title">
-      <p class="eyebrow">Make room for a small beginning</p>
       <h1 id="setup-title" tabindex="-1">What would you like to return to?</h1>
       <p>Choose one or more hobbies. There is no daily streak to keep.</p>
       <form id="setup-form" class="card">
@@ -46,19 +48,34 @@
     </section>
 
     <section id="home" hidden aria-labelledby="home-title">
-      <p class="eyebrow">Small steps count</p>
       <h1 id="home-title" tabindex="-1">A little time, just for you.</h1>
-      <p>Pick up a work in progress or make a small new start.</p>
-      <h2>In progress</h2>
+      <p class="home-intro">Pick up a project or make a small new start.</p>
+      <div class="project-tabs" role="tablist" aria-label="Your projects">
+        <button id="tab-projects" type="button" role="tab" aria-selected="true" aria-controls="panel-projects" tabindex="0">In progress <span id="projects-count" class="tab-count">0</span></button>
+        <button id="tab-gallery" type="button" role="tab" aria-selected="false" aria-controls="panel-gallery" tabindex="-1">Gallery <span id="gallery-count" class="tab-count">0</span></button>
+        <button id="tab-new" type="button" role="tab" aria-selected="false" aria-controls="panel-new" tabindex="-1">New project</button>
+      </div>
+      <section id="panel-projects" class="tab-panel" role="tabpanel" aria-labelledby="tab-projects" tabindex="0">
+      <h2>Projects in progress</h2>
       <div id="saved" class="saved-grid" aria-label="Saved activities"></div>
-      <p id="saved-empty" class="hint">No projects in progress.</p>
-      <section class="gallery" aria-labelledby="gallery-title">
+      <div id="saved-empty" class="empty-state">
+        <p>No projects in progress.</p>
+        <p class="hint">Choose something you’d like to spend a little time on.</p>
+        <button type="button" data-open-new>Start a project</button>
+      </div>
+      </section>
+      <section id="panel-gallery" class="tab-panel gallery" role="tabpanel" aria-labelledby="tab-gallery" tabindex="0" hidden>
         <h2 id="gallery-title">Completed projects</h2>
-        <p id="completed-empty" class="hint">No completed projects yet.</p>
+        <div id="completed-empty" class="empty-state">
+          <p>Your finished projects will live here.</p>
+          <p class="hint">Complete a goal, then choose “Finish project” to add it to your gallery.</p>
+          <button type="button" class="secondary" data-open-projects>Go to in progress</button>
+        </div>
         <div id="completed-projects" class="saved-grid" aria-label="Completed projects"></div>
       </section>
-      <form id="plan-form" class="card">
-        <h2>Start a new activity</h2>
+      <section id="panel-new" class="tab-panel" role="tabpanel" aria-labelledby="tab-new" tabindex="0" hidden>
+      <form id="plan-form">
+        <h2>Start a new project</h2>
         <label for="project-name">Project name <span>(optional)</span></label>
         <input id="project-name" maxlength="120" placeholder="For example: Watercolor garden">
         <div class="columns">
@@ -75,6 +92,7 @@
         <button type="submit">Suggest a small goal</button>
       </form>
       <button id="edit-hobbies" type="button" class="secondary">Edit hobbies</button>
+      </section>
     </section>
 
     <section id="goal-screen" hidden aria-labelledby="goal-title">
@@ -95,7 +113,18 @@
       <h1 id="session-title" tabindex="-1">Enjoy your time.</h1>
       <div class="card">
         <p id="session-meta" class="hint"></p>
-        <p id="timer" class="timer" role="timer" aria-live="off">0s tracked</p>
+        <section class="task-timer" aria-labelledby="timer-title">
+          <div>
+            <h2 id="timer-title">Task timer</h2>
+            <p id="timer" class="timer" role="timer" aria-live="off" aria-label="Time remaining">00:00</p>
+            <p id="timer-detail" class="hint"></p>
+          </div>
+          <div class="timer-actions">
+            <button id="toggle-timer" type="button" class="secondary">Pause timer</button>
+            <p id="timer-state" class="hint" role="status">Running</p>
+          </div>
+          <p id="timer-help" class="hint">Your planned time is a guide. Keep going or stop whenever you like.</p>
+        </section>
         <h2>Your saved goal</h2><p id="active-goal" class="preserve"></p>
         <p>You can stop whenever you need to. Finishing is optional.</p>
         <form id="progress-form">
