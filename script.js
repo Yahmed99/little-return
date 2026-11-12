@@ -9,6 +9,48 @@ const names = {
     journaling: "Journaling"
 };
 
+// Example copy changes with the hobby; user-entered values are never replaced.
+const hobbyCopy = {
+    drawing: {
+        project: "For example: Garden sketches", ideaLabel: "What would you like to draw?",
+        idea: "For example: a sunflower", ideaHelp: "A subject or technique you’d like to practise.",
+        materialsLabel: "Drawing supplies", materials: "For example: pencil and sketchbook",
+        materialsHelp: "Include the tools you have, such as a tablet or watercolors.",
+        help: "Choose a subject and we’ll suggest a manageable drawing goal.",
+        note: "For example: Outline finished. Next time, shade the petals."
+    },
+    reading: {
+        project: "For example: Reading The Secret Garden", ideaLabel: "What would you like to read?",
+        idea: "For example: chapter 3 of The Secret Garden", ideaHelp: "A book, article, or the chapter you want to start with.",
+        materialsLabel: "What are you reading with?", materials: "For example: paperback, e-reader, or library app",
+        materialsHelp: "Leave this blank if you already have something to read.",
+        help: "Choose something to read and we’ll suggest a short reading session.",
+        note: "For example: Stopped at page 42. Start with chapter 4 next time."
+    },
+    journaling: {
+        project: "For example: My weekly reflections", ideaLabel: "What would you like to write about?",
+        idea: "For example: something I’m looking forward to", ideaHelp: "A topic or question. Leave it blank for a simple reflection prompt.",
+        materialsLabel: "Where will you write?", materials: "For example: notebook and pen, or a notes app",
+        materialsHelp: "Use whatever is comfortable: paper or a digital journal.",
+        help: "Choose a topic and we’ll suggest a small writing goal.",
+        note: "For example: Wrote about this week. Next time, reflect on what helped."
+    }
+};
+
+function updateHobbyExamples() {
+    const copy = hobbyCopy[$("hobby").value] || hobbyCopy.drawing;
+    $("project-name").placeholder = copy.project;
+    $("idea-label").textContent = copy.ideaLabel;
+    $("idea").placeholder = copy.idea;
+    $("idea-help").textContent = copy.ideaHelp;
+    $("materials-label").textContent = copy.materialsLabel;
+    $("materials").placeholder = copy.materials;
+    $("materials-help").textContent = copy.materialsHelp;
+    $("hobby-help").textContent = copy.help;
+}
+
+$("hobby").onchange = updateHobbyExamples;
+
 let state = { hobbies: [], sessions: [] };
 let draft;
 let activeId;
@@ -31,17 +73,17 @@ const pending = () => state.sessions.filter(item => item.pending);
 
 function accountUI() {
     $("account-label").textContent = user
-        ? (pending().length ? "Changes awaiting sync" : cloudReady ? "Synced" : "Offline fallback")
-        : "Local only";
+        ? (pending().length ? "Unsynced changes" : cloudReady ? "Saved to account" : "Offline")
+        : "This browser";
     $("auth-form").hidden = !!user;
     $("sign-out").hidden = !user;
     $("import-local").hidden = !user || !guestCount;
     $("sync-now").hidden = !user;
-    $("sync-now").textContent = pending().length ? "Sync pending saves" : "Refresh cloud sessions";
+    $("sync-now").textContent = pending().length ? "Save pending changes" : "Refresh saved projects";
     $("sign-in").disabled = !client;
     $("sync-status").textContent = user
-        ? `${user.email} · ${pending().length ? `${pending().length} save(s) on this browser awaiting sync.` : cloudReady ? "Cloud connected." : "Cloud unavailable — using this account’s browser fallback."}`
-        : "Local only — not synced to a cloud account.";
+        ? `${user.email} · ${pending().length ? `${pending().length} project(s) saved on this browser, waiting to upload.` : cloudReady ? "Your projects are saved to your account." : "Offline. Showing projects saved on this browser."}`
+        : "Your projects are saved on this browser. Sign in to use them on other devices.";
 }
 
 function readCache(key) {
@@ -193,7 +235,7 @@ async function saveSession(session) {
                     return false;
                 }
                 state = next;
-                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Sync pending saves to retry.`, true);
+                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Save pending changes to retry.`, true);
                 return "local";
             }
         }
@@ -280,10 +322,13 @@ document.querySelectorAll("[data-open-projects]").forEach(button => {
 });
 
 function home(tab = homeTab) {
+    const selectedHobby = $("hobby").value;
     $("hobby").replaceChildren(
         ...state.hobbies.map(hobby => new Option(names[hobby], hobby))
     );
 
+    if (state.hobbies.includes(selectedHobby)) $("hobby").value = selectedHobby;
+    updateHobbyExamples();
     $("saved").replaceChildren();
 
     const sessions = [...state.sessions].sort(
@@ -304,11 +349,11 @@ function home(tab = homeTab) {
 
         const time = document.createElement("p");
         time.className = "hint project-time";
-        time.textContent = `${formatTime(session.elapsedSeconds)} tracked · ${session.taskHistory.length} goal${session.taskHistory.length === 1 ? "" : "s"} completed`;
+        time.textContent = `${names[session.hobby]} · ${formatTime(session.elapsedSeconds)} total · ${session.taskHistory.length} goal${session.taskHistory.length === 1 ? "" : "s"} done`;
 
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = session.goalCompleted ? "Choose what’s next" : `Continue ${session.hobby}`;
+        button.textContent = session.goalCompleted ? "Choose next step" : "Continue project";
 
         button.onclick = () => {
             say();
@@ -444,70 +489,22 @@ $("toggle-timer").onclick = () => {
 
 function recommend(hobby, minutes, materials, idea) {
     const available = materials.toLowerCase();
-
     if (hobby === "reading") {
-        return (
-            `Read ${idea || "a book or article you already have"} ` +
-            `for about ${Math.max(1, minutes - 2)} minutes. ` +
-            "Use any remaining time to mark your place and note one thought."
-        );
+        return `Read ${idea || "a few pages of your current book or an article"} for ${minutes} minute${minutes === 1 ? "" : "s"}. Mark where you stop so you can return easily.`;
     }
-
     if (hobby === "journaling") {
-        const medium = /phone|tablet|laptop|digital/.test(available)
-        ? "your notes app"
-        : "paper or a notes app";
-
-        const scope = minutes <= 5
-        ? "A few words or one sentence is enough."
-        : `Write freely for ${Math.max(1, minutes - 2)} minutes, ` +
-        "then leave a sentence to return to.";
-
-        return (
-            `In ${medium}, write about ` +
-            `${idea || "one small moment from today"}. ${scope}`
-        );
+        const medium = /phone|tablet|laptop|digital|app/.test(available) ? "your journal or notes app" : "your journal";
+        return `In ${medium}, write about ${idea || "one moment from today"} for up to ${minutes} minute${minutes === 1 ? "" : "s"}. ${minutes <= 5 ? "A few words or a sentence is enough." : "Start with what happened and how you felt. Stop whenever you’re ready."}`;
     }
-
-    const subject = idea || "a simple penguin made from two ovals";
+    const subject = idea || "an everyday object, such as a cup";
     const digital = /tablet|ipad|digital|drawing app/.test(available);
-    const surface = /paper|sketchbook|notebook|pad/.test(available);
-    const tool = /pencil|pen|marker|crayon|charcoal|brush/.test(available);
-
-    if (available.trim() && !digital && !(surface && tool)) {
-        return (
-            `Plan ${subject} for ${minutes} minutes: ` +
-            "observe or imagine its largest shapes. " +
-            "If you have a drawing surface and a drawing tool, sketch them; " +
-            "otherwise make a mental composition to draw next time."
-        );
+    const hasSurface = /paper|sketchbook|notebook|pad|canvas/.test(available);
+    const hasTool = /pencil|pen|marker|crayon|charcoal|brush|watercolor|paint/.test(available);
+    if (available.trim() && !digital && !(hasSurface && hasTool)) {
+        return `Spend up to ${minutes} minutes planning a drawing of ${subject}. Observe the main shapes. Sketch them if you have a drawing tool and surface available.`;
     }
-
-    const medium = digital
-    ? "In your drawing app, "
-    : available.trim()
-    ? "With your available supplies, "
-    : "If you have pencil and paper, ";
-
-    let goal;
-
-    if (minutes < 10) {
-        goal = `sketch only the largest shapes of ${subject}.`;
-    } else if (minutes <= 25) {
-        goal =
-        `sketch the outline of ${subject}. ` +
-        "Start refining the line art if time allows.";
-    } else {
-        goal =
-        `sketch the outline of ${subject}. ` +
-        "Refine the lines and add a few details if time allows.";
-    }
-
-    return (
-        medium + goal +
-        " Leave color for another session; " +
-        "an unfinished sketch is a good stopping point."
-    );
+    const medium = digital ? "In your drawing app, sketch" : "Sketch";
+    return `${medium} ${subject} for up to ${minutes} minute${minutes === 1 ? "" : "s"}. ${minutes < 10 ? "Focus on the main shapes." : minutes <= 25 ? "Start with the outline, then add a few details if there’s time." : "Start with the outline, then refine the details or add shading."} An unfinished sketch is fine.`;
 }
 
 $("setup-form").onsubmit = event => {
@@ -562,9 +559,10 @@ $("plan-form").onsubmit = event => {
     );
 
     $("goal-context").textContent =
-    `${names[draft.hobby]} · ${draft.minutes} minutes` +
+    `${draft.projectName || names[draft.hobby]} · ${draft.minutes} minutes` +
     (draft.materials ? ` · ${draft.materials}` : "");
 
+    $("back").textContent = "Back to project details";
     say();
     show("goal-screen");
 };
@@ -598,7 +596,10 @@ $("goal-form").onsubmit = async event => {
     try {
         const result = await saveSession(session);
         if (result) {
-            if (startingNewProject) $("plan-form").reset();
+            if (startingNewProject) {
+                $("plan-form").reset();
+                updateHobbyExamples();
+            }
             homeTab = "projects";
             await openSession(session.id, false);
         }
@@ -629,6 +630,10 @@ async function openSession(id, refresh = true) {
         showCompletionChoice(session);
         return;
     }
+    $("session-title").textContent = session.projectName || session.idea || `${names[session.hobby]} project`;
+    $("session-hobby").textContent = names[session.hobby];
+    $("note").placeholder = hobbyCopy[session.hobby].note;
+    $("photo-controls").open = false;
     $("active-goal").textContent = session.goal;
     $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
         (session.materials ? ` · ${session.materials}` : "");
@@ -718,7 +723,7 @@ $("progress-form").onsubmit = async event => {
         say(error.message, true);
     } finally {
         setSessionBusy(false);
-        button.textContent = "Save progress & return home";
+        button.textContent = "Save & close";
     }
 };
 
@@ -758,6 +763,8 @@ $("complete-task").onclick = async () => {
     } finally { setSessionBusy(false); }
 };
 
+$("done-home").onclick = () => { home("projects"); say(); };
+
 $("continue-project").onclick = () => {
     const project = state.sessions.find(item => item.id === activeId);
     // Older completed goals predate timer checkpoints; seed one when continuing.
@@ -779,6 +786,7 @@ $("continue-project").onclick = () => {
     };
     $("goal").value = recommend(draft.hobby, draft.minutes, draft.materials, draft.idea);
     $("goal-context").textContent = `${draft.projectName || draft.idea || names[draft.hobby]} · Next goal`;
+    $("back").textContent = "Back to projects";
     say();
     show("goal-screen");
 };
@@ -960,7 +968,7 @@ async function changeAccount(nextUser) {
 async function initializeCloud() {
     const config = window.SUPABASE_CONFIG || {};
     if (!config.url || !config.anonKey) {
-        say("Cloud sync is not configured yet. You can still save your progress on this browser.");
+        say("Account sign-in is not available yet. You can still save projects on this browser.");
         return;
     }
     try {

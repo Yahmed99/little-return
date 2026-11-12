@@ -119,3 +119,55 @@ h1, h2, h3 { text-wrap: balance; }
 }
 
 .account-label { float: right; font-size: .85rem; font-weight: 400; color: var(--muted); margin-left: .5rem; }
+
+/* Give planning, focused work and saved progress their own spaces. */
+:root { --paper: #f3f5f1; --line: #d3dcd2; }
+header, main, footer { width: min(100% - 2.5rem, 960px); }
+header { padding-block: 1.4rem; }
+main { padding-top: 1.25rem; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.5rem); max-width: 28ch; overflow-wrap: anywhere; }
+.home-intro { margin-bottom: 1.5rem; }
+.account { margin-bottom: 2rem; }
+.project-tabs { gap: 1.75rem; margin-top: 1rem; }
+.tab-panel { padding-top: 2rem; }
+.panel-heading { max-width: 60ch; margin-bottom: 1.5rem; }
+.panel-heading h2 { margin-bottom: .5rem; }
+.panel-heading p { margin: 0; color: var(--muted); }
+#panel-new { max-width: 720px; }
+.form-surface, .goal-summary, .task-timer { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: clamp(1.15rem, 3vw, 1.75rem); }
+.form-group { margin: 0; padding: 0 0 1.5rem; }
+.form-group + .form-group { border-top: 1px solid var(--line); padding-top: 1.5rem; }
+.form-group legend { font-size: 1.15rem; margin-bottom: 1rem; padding: 0; }
+.form-group + .form-group legend { float: left; width: 100%; margin-bottom: 1.2rem; }
+.form-group > label { clear: both; }
+.form-group .hint { margin-top: -.4rem; }
+.form-group .columns { clear: both; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.form-actions p { margin: .25rem 0; }
+.work-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.25rem; margin: 1.5rem 0; }
+.goal-summary p { margin-bottom: 0; }
+.task-timer { margin: 0; grid-template-columns: 1fr; align-content: start; gap: .75rem; }
+.task-timer h2 { font-size: 1.1rem; }
+#timer-state { max-width: none; }
+.progress-surface > .hint { max-width: 62ch; }
+.photo-section { margin: 1.25rem 0; border-top: 1px solid var(--line); padding-top: .5rem; }
+.photo-section summary { padding: .65rem 0; cursor: pointer; font-weight: 650; }
+.completion-action { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; margin-top: 1.5rem; border-top: 1px solid var(--line); }
+.completion-action h2 { font-size: 1.1rem; margin: 0 0 .35rem; }
+.completion-action p { margin: 0; }
+.completion-action button { flex-shrink: 0; }
+.next-choice { padding: 1.5rem 0; border-top: 1px solid var(--line); }
+.next-choice h2 { margin-bottom: .5rem; }
+.next-choice p { margin: 0 0 .75rem; max-width: 54ch; }
+.saved-grid .card { background: #fff; border-color: var(--line); border-radius: 12px; }
+.saved-grid .card .preserve { max-height: 8em; overflow: auto; }
+#goal-form { max-width: 720px; }
+#goal-context { font-weight: 650; }
+@media (max-width: 640px) {
+  .work-layout { grid-template-columns: 1fr; }
+  .completion-action { display: block; }
+  .completion-action button { margin-top: 1rem; }
+  .form-actions { align-items: stretch; }
+  .form-actions button { width: 100%; margin-right: 0; }
+  .project-tabs { gap: .5rem; justify-content: space-between; }
+}
