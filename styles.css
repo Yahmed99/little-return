@@ -61,3 +61,10 @@ h1:focus { outline: none; }
 @media (max-width: 420px) {
   button { width: 100%; margin-right: 0; }
 }
+
+.account { padding: 1rem; margin-top: 0; }
+.account p { margin-top: 0; overflow-wrap: anywhere; }
+.auth-row { display: flex; gap: .5rem; align-items: flex-start; flex-wrap: wrap; }
+.auth-row input { flex: 1 1 180px; width: auto; margin-bottom: .4rem; }
+.auth-row button { flex: 1 1 180px; margin-right: 0; }
+@media (max-width: 420px) { .auth-row input, .auth-row button { width: 100%; flex-basis: 100%; } }

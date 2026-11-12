@@ -13,6 +13,170 @@ let state = { hobbies: [], sessions: [] };
 let draft;
 let activeId;
 let blocked = false;
+let client = null;
+let user = null;
+let cloudReady = false;
+let generation = 0;
+let saving = false;
+let guestCount = 0;
+const BUCKET = "progress-photos";
+const emptyState = () => ({ hobbies: [], sessions: [] });
+const cacheKey = () => user ? `${KEY}:user:${user.id}` : KEY;
+const pending = () => state.sessions.filter(item => item.pending);
+
+function accountUI() {
+    $("auth-form").hidden = !!user;
+    $("sign-out").hidden = !user;
+    $("import-local").hidden = !user || !guestCount;
+    $("sync-now").hidden = !user;
+    $("sync-now").textContent = pending().length ? "Sync pending saves" : "Refresh cloud sessions";
+    $("sign-in").disabled = !client;
+    $("sync-status").textContent = user
+        ? `${user.email} · ${pending().length ? `${pending().length} save(s) on this browser awaiting sync.` : cloudReady ? "Cloud connected." : "Cloud unavailable — using this account’s browser fallback."}`
+        : "Local only — not synced to a cloud account.";
+}
+
+function readCache(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return emptyState();
+        const data = JSON.parse(raw);
+        if (!Array.isArray(data.hobbies) || !data.hobbies.every(h => Object.hasOwn(names, h)) ||
+            !Array.isArray(data.sessions) || !data.sessions.every(item =>
+                item && typeof item.id === "string" && Object.hasOwn(names, item.hobby) &&
+                ["goal", "note", "materials", "idea"].every(k => typeof item[k] === "string") &&
+                Number.isFinite(item.minutes) && Number.isFinite(item.updated) &&
+                (!item.photo || /^data:image\/(jpeg|png|webp);base64,/.test(item.photo)))) {
+            throw new Error("Invalid browser data");
+        }
+        return data;
+    } catch {
+        blocked = true;
+        say("Browser fallback could not be loaded. It has not been overwritten. Cloud saves can still be used; check browser storage before saving locally.", true);
+        return emptyState();
+    }
+}
+
+function writeCache(next) {
+    if (blocked) return false;
+    try {
+        localStorage.setItem(cacheKey(), JSON.stringify(next));
+        return true;
+    } catch { return false; }
+}
+
+function fromRow(row) {
+    return { ...row, photo: "", updated: Date.parse(row.updated_at), pending: false };
+}
+
+function inferHobbies() {
+    state.hobbies = [...new Set([...state.hobbies, ...state.sessions.map(s => s.hobby)])];
+    // A new cloud account can start immediately on any device.
+    if (user && !state.hobbies.length) state.hobbies = Object.keys(names);
+}
+
+function landing() {
+    inferHobbies();
+    state.hobbies.length ? home() : setup();
+    accountUI();
+}
+
+async function loadCloud() {
+    const owner = user;
+    const epoch = generation;
+    if (!owner) return;
+    try {
+        // Page explicitly: Supabase normally caps each response at 1,000 rows.
+        let rows = [];
+        for (let start = 0; ; start += 500) {
+            const { data, error } = await client.from("sessions").select("*")
+                .eq("user_id", owner.id).order("id").range(start, start + 499);
+            if (error) throw error;
+            rows.push(...data);
+            if (data.length < 500) break;
+        }
+        if (epoch !== generation) return;
+        const waiting = pending();
+        state.sessions = [...rows.filter(r => !waiting.some(p => p.id === r.id)).map(fromRow), ...waiting];
+        cloudReady = true;
+        inferHobbies();
+        writeCache(state);
+    } catch (error) {
+        if (epoch !== generation) return;
+        cloudReady = false;
+        say(`Could not load cloud sessions: ${error.message}. Browser fallback remains available.`, true);
+    }
+    accountUI();
+}
+
+async function uploadPhoto(session, owner) {
+    if (!session.photo) return session.storage_path || null;
+    const blob = await (await fetch(session.photo)).blob();
+    const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[blob.type];
+    if (!extension || blob.size > 1024 * 1024) throw new Error("Invalid progress photo");
+    const path = `${owner.id}/${session.id}/${crypto.randomUUID()}.${extension}`;
+    const { error } = await client.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false });
+    if (error) throw error;
+    return path;
+}
+
+async function persistCloud(session, owner) {
+    const path = await uploadPhoto(session, owner);
+    const row = {
+        id: session.id, user_id: owner.id, hobby: session.hobby, minutes: session.minutes,
+        materials: session.materials, idea: session.idea, goal: session.goal, note: session.note,
+        storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString()
+    };
+    const { data, error } = await client.from("sessions").upsert(row).select().single();
+    // If a response is lost, keep the upload: the database may already reference it.
+    if (error) throw error;
+    if (session.storage_path && session.storage_path !== path) {
+        await client.storage.from(BUCKET).remove([session.storage_path]).catch(() => {});
+    }
+    return fromRow(data);
+}
+
+async function saveSession(session) {
+    if (saving) return false;
+    saving = true;
+    const owner = user;
+    const epoch = generation;
+    try {
+        let saved = { ...session, pending: !!owner };
+        if (owner) {
+            try {
+                saved = await persistCloud(session, owner);
+                if (epoch !== generation) return false;
+                cloudReady = true;
+            } catch (error) {
+                if (epoch !== generation) return false;
+                cloudReady = false;
+                const next = { ...state, sessions: [...state.sessions.filter(s => s.id !== session.id), saved] };
+                if (!writeCache(next)) {
+                    say(`Cloud save failed: ${error.message}. Browser fallback also failed. Your changes remain on this screen; copy your notes or try again.`, true);
+                    return false;
+                }
+                state = next;
+                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Sync pending saves to retry.`, true);
+                return "local";
+            }
+        }
+        if (epoch !== generation) return false;
+        const next = { ...state, sessions: [...state.sessions.filter(s => s.id !== session.id), saved] };
+        const cached = writeCache(next);
+        if (!owner && !cached) {
+            say("Browser save failed. Storage may be blocked or full. Your changes remain on this screen; try removing the photo.", true);
+            return false;
+        }
+        state = next;
+        if (!owner) guestCount = state.sessions.length;
+        say(owner ? (cached ? "Saved to your cloud account." : "Saved to cloud. Browser fallback is unavailable.") : "Saved on this browser only.");
+        return true;
+    } finally {
+        saving = false;
+        accountUI();
+    }
+}
 
 function say(message = "", error = false) {
     $("status").textContent = error ? "" : message;
@@ -28,28 +192,12 @@ function show(id) {
 }
 
 function commit(next) {
-    if (blocked) {
-        say(
-            "Saving is unavailable. Copy any unsaved notes, then reload " +
-            "after checking browser storage access.",
-            true
-        );
+    state = next;
+    if (!writeCache(next)) {
+        say("Hobbies changed for this visit. Browser preferences could not be saved.", true);
         return false;
     }
-
-    try {
-        localStorage.setItem(KEY, JSON.stringify(next));
-        state = next;
-        return true;
-    } catch {
-        say(
-            "Save failed. Your changes are still on this screen. " +
-            "Browser storage may be blocked or full. " +
-            "Try removing the photo and saving again.",
-            true
-        );
-        return false;
-    }
+    return true;
 }
 
 function setup() {
@@ -226,7 +374,7 @@ $("plan-form").onsubmit = event => {
     show("goal-screen");
 };
 
-$("goal-form").onsubmit = event => {
+$("goal-form").onsubmit = async event => {
     event.preventDefault();
 
     const goal = $("goal").value.trim();
@@ -239,46 +387,63 @@ $("goal-form").onsubmit = event => {
     const session = {
         ...draft,
         goal,
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+        id: draft.id || (draft.id = crypto.randomUUID()),
         note: "",
         photo: "",
         updated: Date.now()
     };
 
-    if (commit({
-        ...state,
-        sessions: [...state.sessions, session]
-    })) {
-        openSession(session.id);
-        say("Goal saved. You can return to it anytime.");
-    }
+    const button = $("goal-form").querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+        const result = await saveSession(session);
+        if (result) await openSession(session.id, false);
+    } finally { button.disabled = false; }
 };
 
-function openSession(id) {
+async function openSession(id, refresh = true) {
+    const epoch = generation;
+    const owner = user;
+    let session = state.sessions.find(item => item.id === id);
+    if (!session) return;
+    if (owner && refresh && !session.pending) {
+        try {
+            const { data, error } = await client.from("sessions").select("*").eq("id", id).eq("user_id", owner.id).single();
+            if (error) throw error;
+            if (epoch !== generation) return;
+            session = fromRow(data);
+            state.sessions = state.sessions.map(s => s.id === id ? session : s);
+            writeCache(state);
+        } catch (error) {
+            if (epoch !== generation) return;
+            say(`Could not refresh this session: ${error.message}. Showing the browser copy.`, true);
+        }
+    }
+    if (epoch !== generation) return;
     activeId = id;
-
-    const session = state.sessions.find(item => item.id === id);
-
     $("active-goal").textContent = session.goal;
-
-    $("session-meta").textContent =
-    `${names[session.hobby]} · ${session.minutes}-minute goal` +
-    (session.materials ? ` · ${session.materials}` : "");
-
+    $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
+        (session.materials ? ` · ${session.materials}` : "");
     $("note").value = session.note;
     $("photo").value = "";
     $("remove-photo").checked = false;
     $("photo-controls").hidden = session.hobby === "reading";
-    $("preview").hidden = !session.photo;
-
-    if (session.photo) {
-        $("preview").src = session.photo;
-    } else {
-        $("preview").removeAttribute("src");
-    }
-
-    $("remove-wrap").hidden = !session.photo;
+    $("preview").hidden = true;
+    $("preview").removeAttribute("src");
+    $("remove-wrap").hidden = !(session.photo || session.storage_path);
     show("session");
+    let url = session.photo;
+    if (!url && session.storage_path && owner) {
+        try {
+            const { data, error } = await client.storage.from(BUCKET).createSignedUrl(session.storage_path, 3600);
+            if (error) throw error;
+            url = data.signedUrl;
+        } catch { say("Your photo could not be loaded. The saved photo is still attached; try opening this session again.", true); }
+    }
+    if (epoch === generation && activeId === id && !$("session").hidden && url) {
+        $("preview").src = url;
+        $("preview").hidden = false;
+    }
 }
 
 function readPhoto(file) {
@@ -310,6 +475,7 @@ function readPhoto(file) {
 $("progress-form").onsubmit = async event => {
     event.preventDefault();
 
+    const epoch = generation;
     const button = $("save-progress");
     button.disabled = true;
     $("leave").disabled = true;
@@ -323,26 +489,18 @@ $("progress-form").onsubmit = async event => {
         if (file && !$("remove-photo").checked) {
             photo = await readPhoto(file);
         }
+        if (epoch !== generation) return;
 
         const updated = {
             ...session,
             note: $("note").value.trim(),
             photo,
+            storage_path: $("remove-photo").checked ? null : session.storage_path,
             updated: Date.now()
         };
 
-        if (commit({
-            ...state,
-            sessions: state.sessions.map(item =>
-            item.id === activeId ? updated : item
-            )
-        })) {
-            home();
-            say(
-                "Progress saved. Your next small step will be here " +
-                "when you return."
-            );
-        }
+        const result = await saveSession(updated);
+        if (result) home();
     } catch (error) {
         say(error.message, true);
     } finally {
@@ -387,65 +545,143 @@ window.addEventListener("beforeunload", event => {
     }
 });
 
-// Prevent this tab from overwriting changes made in another tab.
+// Avoid overwriting another tab's fallback changes. Cloud remains authoritative.
 window.addEventListener("storage", event => {
-    if (event.key === KEY || event.key === null) {
+    if (event.key === cacheKey() || event.key === null) {
         blocked = true;
-
-        say(
-            "Saved data changed in another tab. Copy any unsaved notes, " +
-            "then reload before saving again.",
-            true
-        );
+        say("Browser data changed in another tab. Reload before saving locally; cloud saves remain available.", true);
     }
 });
 
-// Restore saved hobbies and sessions without a check-in.
-try {
-    const raw = localStorage.getItem(KEY);
+$("auth-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!client) return;
+    $("sign-in").disabled = true;
+    try {
+        const { error } = await client.auth.signInWithOtp({
+            email: $("email").value.trim(),
+            options: { emailRedirectTo: location.origin + location.pathname }
+        });
+        if (error) throw error;
+        say("Check your email for a sign-in link. You can keep working locally while you wait.");
+    } catch (error) { say(`Sign-in failed: ${error.message}`, true); }
+    finally { $("sign-in").disabled = false; }
+};
 
-    if (raw) {
-        const data = JSON.parse(raw);
+$("sign-out").onclick = async () => {
+    if (saving) { say("Please wait for the current save to finish.", true); return; }
+    if (hasUnsavedProgress() && !confirm("Sign out and leave unsaved changes?")) return;
+    $("sign-out").disabled = true;
+    try {
+        const { error } = await client.auth.signOut({ scope: "local" });
+        if (error) throw error;
+        say("Signed out. Guest progress is available on this browser.");
+    } catch (error) { say(`Sign-out failed: ${error.message}. You are still signed in.`, true); }
+    finally { $("sign-out").disabled = false; }
+};
 
-        const validHobbies =
-        Array.isArray(data.hobbies) &&
-        data.hobbies.every(hobby => Object.hasOwn(names, hobby));
-
-        const validSessions =
-        Array.isArray(data.sessions) &&
-        data.sessions.every(session =>
-        session &&
-        Object.hasOwn(names, session.hobby) &&
-        typeof session.id === "string" &&
-        ["goal", "note", "photo", "materials", "idea"].every(
-            key => typeof session[key] === "string"
-        ) &&
-        Number.isFinite(session.minutes) &&
-        Number.isFinite(session.updated) &&
-        (
-            !session.photo ||
-            /^data:image\/(jpeg|png|webp);base64,/.test(session.photo)
-        )
-        );
-
-        if (!validHobbies || !validSessions) {
-            throw new Error("Invalid saved data");
+$("sync-now").onclick = async () => {
+    if (!user || saving) return;
+    if (hasUnsavedProgress()) { say("Save your current edits before refreshing cloud sessions.", true); return; }
+    $("sync-now").disabled = true;
+    try {
+        const epoch = generation;
+        for (const session of [...pending()]) {
+            if (epoch !== generation || await saveSession(session) !== true) return;
         }
+        await loadCloud();
+        if (epoch === generation) landing();
+    } finally { $("sync-now").disabled = false; }
+};
 
-        state = data;
+$("import-local").onclick = async () => {
+    if (!user || saving) return;
+    if (hasUnsavedProgress()) { say("Save your current edits before importing local progress.", true); return; }
+    $("import-local").disabled = true;
+    const epoch = generation;
+    try {
+        const local = readCache(KEY);
+        // Deterministic per-account IDs make repeated imports safe, even across reloads.
+        for (const session of local.sessions) {
+            if (epoch !== generation) return;
+            const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${user.id}:${session.id}`));
+            const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+            const id = `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;
+            if (state.sessions.some(s => s.id === id)) continue;
+            // Check the server too: importing again never overwrites existing cloud work.
+            const { data, error } = await client.from("sessions").select("id").eq("id", id).maybeSingle();
+            if (error) throw error;
+            if (epoch !== generation) return;
+            if (!data && await saveSession({ ...session, id, user_id: user.id }) !== true) return;
+        }
+        if (epoch === generation) { await loadCloud(); landing(); say("Local progress imported. Your original guest copy remains on this browser."); }
+    } catch (error) { say(`Import failed: ${error.message}. Your guest progress is unchanged; retry when connected.`, true); }
+    finally { $("import-local").disabled = false; }
+};
+
+async function changeAccount(nextUser) {
+    if ((user?.id || null) === (nextUser?.id || null)) return;
+    // Preserve the current account's edited notes before an auth change resets the UI.
+    if (hasUnsavedProgress()) {
+        const session = state.sessions.find(s => s.id === activeId);
+        const next = { ...state, sessions: state.sessions.map(s => s.id === activeId
+            ? { ...session, note: $("note").value.trim(), pending: !!user, updated: Date.now() } : s) };
+        writeCache(next);
+        say("Account changed. Notes were kept in the previous browser fallback where possible. Reselect any unsaved photo after signing in again.", true);
     }
-} catch {
-    blocked = true;
-
-    say(
-        "Saved data could not be loaded. It has not been overwritten. " +
-        "Check browser storage access and reload.",
-        true
-    );
+    generation++;
+    user = nextUser;
+    activeId = null;
+    draft = null;
+    cloudReady = false;
+    blocked = false;
+    state = readCache(cacheKey());
+    if (!user) guestCount = state.sessions.length;
+    // Immediately remove the old account's rendered contents, including photo URLs.
+    $("preview").removeAttribute("src");
+    $("active-goal").textContent = "";
+    $("note").value = "";
+    $("photo").value = "";
+    $("goal").value = "";
+    landing();
+    if (user) { await loadCloud(); if (!hasUnsavedProgress() && !$("home").hidden) home(); }
 }
 
-if (state.hobbies.length) {
-    home();
-} else {
-    setup();
+async function initializeCloud() {
+    const config = window.SUPABASE_CONFIG || {};
+    if (!config.url || !config.anonKey) {
+        say("Cloud sync is not configured yet. You can still save your progress on this browser.");
+        return;
+    }
+    try {
+        const sdk = await Promise.race([
+            import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/+esm"),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Client download timed out")), 12000))
+        ]);
+        // Bound network waits so the browser fallback remains usable during outages.
+        client = sdk.createClient(config.url, config.anonKey, {
+            global: { fetch: (url, options = {}) => fetch(url, {
+                ...options,
+                signal: options.signal
+                    ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)])
+                    : AbortSignal.timeout(15000)
+            }) }
+        });
+        // Defer database work until outside Supabase's auth callback lock.
+        client.auth.onAuthStateChange((_event, session) => {
+            setTimeout(() => { changeAccount(session?.user || null).catch(error => say(error.message, true)); }, 0);
+        });
+        const { data, error } = await client.auth.getSession();
+        if (error) throw error;
+        await changeAccount(data.session?.user || null);
+        accountUI();
+    } catch (error) {
+        say(`Cloud connection failed: ${error.message}. Continue locally or reload to retry.`, true);
+        accountUI();
+    }
 }
+
+state = readCache(KEY);
+guestCount = state.sessions.length;
+landing();
+initializeCloud();
