@@ -387,7 +387,7 @@ function home(tab = homeTab) {
         };
 
         const remove = deleteButton(session);
-        card.append(title, note, time, button, remove);
+        card.append(title, note, time, button, renameControl(session), remove);
         $("saved").append(card);
     }
     $("saved-empty").hidden = sessions.some(item => !item.completedAt);
@@ -432,10 +432,85 @@ function renderCompletedProjects(projects) {
         open.type = "button";
         open.textContent = "View project";
         open.onclick = () => openProjectDetails(project.id);
-        card.append(title, meta, description, open, deleteButton(project));
+        card.append(title, meta, description, open, renameControl(project), deleteButton(project));
         gallery.append(card);
     }
     $("completed-empty").hidden = projects.length > 0;
+}
+
+function renameControl(project) {
+    const container = document.createElement("div");
+    container.className = "project-rename";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.id = `rename-${project.id}`;
+    button.textContent = "Rename project";
+    button.setAttribute("aria-label", `Rename ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    const form = document.createElement("form");
+    form.hidden = true;
+    const label = document.createElement("label");
+    label.textContent = "Project name";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 120;
+    input.required = true;
+    label.append(input);
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "Save name";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "quiet";
+    cancel.textContent = "Cancel";
+    const close = () => {
+        form.hidden = true;
+        button.hidden = false;
+        button.focus();
+    };
+    cancel.onclick = close;
+    input.oninput = () => input.setCustomValidity("");
+    form.onkeydown = event => {
+        if (event.key === "Escape" && !save.disabled) { event.preventDefault(); close(); }
+    };
+    button.onclick = () => {
+        const current = state.sessions.find(item => item.id === project.id);
+        if (!current) return;
+        input.value = current.projectName || current.idea || `${names[current.hobby]} project`;
+        input.setCustomValidity("");
+        button.hidden = true;
+        form.hidden = false;
+        input.focus();
+        input.select();
+    };
+    form.onsubmit = async event => {
+        event.preventDefault();
+        const name = input.value.trim();
+        if (!name || name.length > 120) {
+            input.setCustomValidity("Enter a project name between 1 and 120 characters.");
+            input.reportValidity();
+            return;
+        }
+        if (saving) { say("Wait for the current save to finish before renaming.", true); return; }
+        const current = state.sessions.find(item => item.id === project.id);
+        if (!current) return;
+        if (name === current.projectName) { close(); return; }
+        save.disabled = cancel.disabled = input.disabled = true;
+        try {
+            const result = await saveSession({ ...current, projectName: name, updated: Date.now() });
+            if (!result) return;
+            home(current.completedAt ? "gallery" : "projects");
+            document.getElementById(button.id)?.focus();
+        } finally {
+            save.disabled = cancel.disabled = input.disabled = false;
+        }
+    };
+    actions.append(save, cancel);
+    form.append(label, actions);
+    container.append(button, form);
+    return container;
 }
 
 function deleteButton(project) {

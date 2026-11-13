@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1d5c4a">
+  <meta name="theme-color" content="#FFFFFF">
   <title>Little Return — A little time for what you love</title>
   <link rel="stylesheet" href="styles.css">
   <script src="supabase-config.js" defer></script>
@@ -42,8 +42,13 @@
     <noscript>Enable JavaScript to create and save projects.</noscript>
 
     <section id="setup" hidden aria-labelledby="setup-title">
-      <h1 id="setup-title" tabindex="-1">Make a little time for what you love</h1>
-      <p class="lead">Little Return helps you take one small, doable step on a hobby, then pick it up again later.</p>
+      <div class="sketch-hero">
+        <div>
+          <h1 id="setup-title" tabindex="-1">Make a little time for what you love</h1>
+          <p class="lead">Little Return helps you take one small, doable step on a hobby, then pick it up again later.</p>
+        </div>
+        <img src="assets/graphite-return-hero.png" width="1536" height="1024" alt="" decoding="async">
+      </div>
       <ol class="how">
         <li><div><strong>Pick a hobby and a time.</strong> Even 10 minutes counts.</div></li>
         <li><div><strong>Get a small goal.</strong> We suggest one; you can change it.</div></li>
@@ -63,8 +68,13 @@
     </section>
 
     <section id="home" hidden aria-labelledby="home-title">
-      <h1 id="home-title" tabindex="-1">Your projects</h1>
-      <p class="lead">Continue where you left off, or start something new.</p>
+      <div class="sketch-hero">
+        <div>
+          <h1 id="home-title" tabindex="-1">Your projects</h1>
+          <p class="lead">Continue where you left off, or start something new.</p>
+        </div>
+        <img src="assets/graphite-return-hero.png" width="1536" height="1024" alt="" decoding="async">
+      </div>
       <div class="project-tabs" role="tablist" aria-label="Your projects">
         <button id="tab-projects" type="button" role="tab" aria-selected="true" aria-controls="panel-projects" tabindex="0"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg><span>In progress</span><b id="projects-count" class="tab-count">0</b></button>
         <button id="tab-new" type="button" role="tab" aria-selected="false" aria-controls="panel-new" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New project</span></button>

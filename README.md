@@ -17,6 +17,7 @@ Create a public-only staging directory, then serve it. Rerun the copy after edit
 ```sh
 mkdir -p /tmp/little-return-preview
 cp index.html styles.css script.js supabase-config.js /tmp/little-return-preview/
+cp -R assets /tmp/little-return-preview/
 python3 -m http.server 8000 --bind 127.0.0.1 --directory /tmp/little-return-preview
 ```
 
@@ -33,6 +34,8 @@ Open http://localhost:8000/ (use the same hostname in Supabase redirect settings
 - Test at a 375px viewport, keyboard navigation, invalid email, expired magic link, sign-in/sign-out failures, and invalid/oversized photo selection.
 
 ## Storage and tradeoffs
+
+In-progress and finished project cards include **Rename project**. Enter a name (1–120 characters), then choose **Save name**; **Cancel** or Escape discards the edit. Renaming uses the existing guest/cloud save flow, including pending offline saves, and retains goals, notes, photos, tracked time, and completion status. No database migration is needed. JavaScript harness checks cover both project states, guest/cloud/offline saves, invalid names, cancellation, and storage failure/retry; cloud calls were mocked.
 
 Supabase is the signed-in source of truth; browser caches are scoped per account and kept separate from the original guest key `little-return-v1`. The SDK stores auth credentials in browser storage, as normal for a static client application. Signing out hides account caches but does not erase them: do not use shared browser profiles for sensitive notes.
 
