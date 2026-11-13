@@ -92,6 +92,10 @@ h1:focus { outline: none; }
 input[type=checkbox] { width: 1.3rem; height: 1.3rem; accent-color: var(--accent); flex-shrink: 0; }
 .columns { display: grid; gap: 0 1rem; }
 .chips { display: flex; flex-wrap: wrap; gap: .5rem; margin: -.4rem 0 1rem; }
+.custom-time { padding: 1rem; border: 1px solid var(--line); border-radius: var(--control-r); }
+.custom-time #minutes { margin-bottom: .75rem; font-size: 1.25rem; border-color: var(--accent); }
+.custom-time .hint { margin: .25rem 0 .6rem; }
+.custom-time .chips { margin: 0; }
 .chip { --button-bg: var(--surface); --button-text: var(--accent); --button-border: var(--line); --button-hover: var(--tint); min-height: 44px; min-width: 3rem; padding: .3rem .8rem; }
 .chip.on { --button-bg: var(--accent); --button-text: var(--paper); --button-border: var(--accent); --button-hover: var(--accent-hover); }
 
@@ -154,7 +158,12 @@ input[type=checkbox] { width: 1.3rem; height: 1.3rem; accent-color: var(--accent
 .timer { margin: 0; font: 650 clamp(2.2rem, 11vw, 3rem)/1 system-ui; font-variant-numeric: tabular-nums; }
 .timer-box .hint { margin: .4rem 0; }
 .photo-section { border-top: 1px solid var(--line); margin: 1.25rem 0; }
-.photo-section summary { min-height: 48px; padding: .7rem 0; cursor: pointer; font-weight: 650; }
+.photo-section h3 { margin-top: 1.25rem; }
+.photo-dropzone { padding: 1.5rem 1rem; border: 2px dashed var(--line); border-radius: var(--r); text-align: center; background: var(--paper); }
+.photo-dropzone.drag-over { border-color: var(--accent); background: var(--tint); }
+.photo-dropzone svg { width: 2.5rem; height: 2.5rem; fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.photo-upload-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: .6rem; }
+#photo-selection { margin: .75rem 0 0; overflow-wrap: anywhere; }
 #preview, .history-photo { display: block; max-width: 100%; height: auto; max-height: 480px; object-fit: contain; border-radius: var(--control-r); margin: 1rem 0; }
 #preview { max-height: 300px; }
 #complete-task { flex: 1 1 100%; }

@@ -104,10 +104,12 @@
             <legend>What would you like to do?</legend>
             <div class="columns">
               <div><label for="hobby">Hobby</label><select id="hobby"></select></div>
-              <div><label for="minutes">Time for this goal <span>(minutes)</span></label>
-                <input id="minutes" type="number" inputmode="numeric" min="1" max="180" step="1" value="20" required>
+              <div class="custom-time"><label for="minutes">Set your timer <span>(minutes)</span></label>
+                <p id="minutes-help" class="hint">Type any whole number from 1 to 180 minutes.</p>
+                <input id="minutes" type="number" inputmode="numeric" min="1" max="180" step="1" value="20" aria-describedby="minutes-help" required>
+                <p class="hint quick-time-label">Or choose a quick timer:</p>
                 <div class="chips" aria-label="Quick time choices">
-                  <button type="button" class="chip" data-min="10">10</button><button type="button" class="chip" data-min="20">20</button><button type="button" class="chip" data-min="30">30</button><button type="button" class="chip" data-min="45">45</button>
+                  <button type="button" class="chip" data-min="10">10 min</button><button type="button" class="chip" data-min="20">20 min</button><button type="button" class="chip" data-min="30">30 min</button><button type="button" class="chip" data-min="45">45 min</button>
                 </div>
               </div>
             </div>
@@ -194,14 +196,24 @@
         <p class="hint">Leave a note for next time. You don’t have to finish your goal to save.</p>
         <label for="note">Notes for next time <span>(optional)</span></label>
         <textarea id="note" rows="4" maxlength="2000" placeholder="Outline finished. Next time: add the eyes and wings."></textarea>
-        <details id="photo-controls" class="photo-section">
-          <summary>Add or change a progress photo</summary>
-          <label for="photo">Progress photo <span>(optional)</span></label>
-          <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help">
-          <p id="photo-help" class="hint">JPEG, PNG or WebP, up to 1 MB. A new photo replaces the previous one.</p>
+        <section id="photo-controls" class="photo-section" aria-labelledby="photo-title">
+          <h3 id="photo-title">Progress photo <span class="hint">(optional)</span></h3>
+          <div id="photo-dropzone" class="photo-dropzone" role="group" aria-labelledby="photo-title" aria-describedby="photo-help">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9h6l2-3h6l2 3h6v17H5z"/><circle cx="16" cy="17" r="5"/></svg>
+            <p><strong>Drop a photo here</strong><br><span class="hint">or choose how to add it</span></p>
+            <div class="photo-upload-actions">
+              <button id="choose-photo" type="button" class="secondary">Choose a photo</button>
+              <button id="take-photo" type="button" class="secondary">Take a photo</button>
+            </div>
+            <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose a progress photo" hidden>
+            <input id="camera-photo" type="file" accept="image/*" capture="environment" aria-label="Take a progress photo" hidden>
+            <p id="photo-selection" class="hint" role="status" aria-live="polite">No new photo selected.</p>
+            <button id="clear-photo" type="button" class="quiet" hidden>Clear new photo</button>
+          </div>
+          <p id="photo-help" class="hint">JPEG, PNG or WebP. Large photos are resized to fit the 5 MB limit. A new photo replaces the previous one. On mobile, Take a photo opens your camera when supported.</p>
           <img id="preview" alt="Your saved progress" hidden>
           <label id="remove-wrap" class="check" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
-        </details>
+        </section>
         <div class="actions">
           <button id="complete-task" type="button">Mark goal as done</button>
           <button id="save-progress" type="submit" class="secondary">Save &amp; close</button>

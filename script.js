@@ -52,7 +52,11 @@ function updateHobbyExamples() {
 $("hobby").onchange = updateHobbyExamples;
 
 function syncChips() {
-    document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.min === $("minutes").value));
+    document.querySelectorAll(".chip").forEach(c => {
+        const selected = c.dataset.min === $("minutes").value;
+        c.classList.toggle("on", selected);
+        c.setAttribute("aria-pressed", String(selected));
+    });
 }
 document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("minutes").value = c.dataset.min; syncChips(); });
 $("minutes").addEventListener("input", syncChips);
@@ -81,7 +85,13 @@ let timerInterval = null;
 let timerCheckpoint = null;
 let timerWrites = 0;
 let resumeTimerOnVisible = false;
+let selectedPhoto = null;
+let selectedPhotoPreview = "";
+let savedPhotoUrl = "";
+let photoReading = false;
+let photoSelectionVersion = 0;
 const BUCKET = "progress-photos";
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const emptyState = () => ({ hobbies: [], sessions: [] });
 const cacheKey = () => user ? `${KEY}:user:${user.id}` : KEY;
 const pending = () => state.sessions.filter(item => item.pending);
@@ -204,7 +214,7 @@ async function uploadPhoto(session, owner) {
     if (!session.photo) return session.storage_path || null;
     const blob = await (await fetch(session.photo)).blob();
     const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[blob.type];
-    if (!extension || blob.size > 1024 * 1024) throw new Error("Invalid progress photo");
+    if (!extension || blob.size > MAX_PHOTO_BYTES) throw new Error("Invalid progress photo");
     const path = `${owner.id}/${session.id}/${crypto.randomUUID()}.${extension}`;
     const { error } = await client.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false });
     if (error) throw error;
@@ -935,14 +945,14 @@ async function openSession(id, refresh = true) {
     $("session-title").textContent = session.projectName || session.idea || `${names[session.hobby]} project`;
     $("session-hobby").textContent = names[session.hobby];
     $("note").placeholder = hobbyCopy[session.hobby].note;
-    $("photo-controls").open = false;
     $("active-goal").textContent = session.goal;
     $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
         (session.materials ? ` · ${session.materials}` : "");
     $("note").value = session.note;
-    $("photo").value = "";
+    savedPhotoUrl = session.photo || "";
+    resetNewPhoto();
     $("remove-photo").checked = false;
-    $("photo-controls").hidden = session.hobby === "reading";
+    $("photo-controls").hidden = false;
     $("preview").hidden = true;
     $("preview").removeAttribute("src");
     $("remove-wrap").hidden = !(session.photo || session.storage_path);
@@ -959,18 +969,124 @@ async function openSession(id, refresh = true) {
         } catch { say("Your photo could not be loaded. The saved photo is still attached; try opening this session again.", true); }
     }
     if (epoch === generation && activeId === id && !$("session").hidden && url) {
-        $("preview").src = url;
-        $("preview").hidden = false;
+        savedPhotoUrl = url;
+        refreshPhotoPreview();
     }
 }
+
+function refreshPhotoPreview() {
+    const url = $("remove-photo").checked ? "" : selectedPhotoPreview || savedPhotoUrl;
+    $("preview").hidden = !url;
+    if (url) $("preview").src = url;
+    else $("preview").removeAttribute("src");
+}
+
+function resetNewPhoto() {
+    photoSelectionVersion++;
+    photoReading = false;
+    selectedPhoto = null;
+    selectedPhotoPreview = "";
+    $("photo").value = "";
+    $("camera-photo").value = "";
+    $("photo-selection").textContent = "No new photo selected.";
+    $("clear-photo").hidden = true;
+    $("photo-dropzone").classList.remove("drag-over");
+}
+
+async function prepareProgressPhoto(file) {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        throw new Error("Choose a JPEG, PNG or WebP photo.");
+    }
+    if (file.size <= MAX_PHOTO_BYTES) return file;
+    if (file.size > 25 * 1024 * 1024) throw new Error("Choose a photo smaller than 25 MB.");
+    const url = URL.createObjectURL(file);
+    try {
+        const image = await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("This photo could not be opened. Choose another JPEG, PNG or WebP."));
+            image.src = url;
+        });
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Photo resizing is unavailable. Choose a photo up to 5 MB.");
+        for (const edge of [1600, 1200, 900]) {
+            const scale = Math.min(1, edge / Math.max(image.naturalWidth, image.naturalHeight));
+            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+            context.fillStyle = "#FFFFFF";
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .85));
+            if (blob && blob.size <= MAX_PHOTO_BYTES) {
+                return new File([blob], "progress-photo.jpg", { type: "image/jpeg" });
+            }
+        }
+        throw new Error("Could not resize this photo below 5 MB. Choose a smaller photo.");
+    } finally { URL.revokeObjectURL(url); }
+}
+
+async function selectProgressPhoto(file) {
+    if (!file) return;
+    const version = ++photoSelectionVersion;
+    photoReading = true;
+    $("photo-selection").textContent = "Preparing photo…";
+    $("clear-photo").hidden = false;
+    try {
+        const prepared = await prepareProgressPhoto(file);
+        const preview = await readPhoto(prepared);
+        if (version !== photoSelectionVersion) return;
+        selectedPhoto = prepared;
+        selectedPhotoPreview = preview;
+        $("remove-photo").checked = false;
+        $("photo-selection").textContent = `${file.name} · ${Math.ceil(prepared.size / 1024)} KB · Ready to save`;
+        refreshPhotoPreview();
+    } catch (error) {
+        if (version !== photoSelectionVersion) return;
+        $("photo-selection").textContent = selectedPhoto ? "Previous selection kept. Choose another photo to replace it." : "No new photo selected.";
+        $("clear-photo").hidden = !selectedPhoto;
+        say(error.message, true);
+    } finally {
+        if (version === photoSelectionVersion) {
+            photoReading = false;
+            $("photo").value = "";
+            $("camera-photo").value = "";
+        }
+    }
+}
+
+$("choose-photo").onclick = () => $("photo").click();
+$("take-photo").onclick = () => $("camera-photo").click();
+$("photo").onchange = event => selectProgressPhoto(event.target.files[0]);
+$("camera-photo").onchange = event => selectProgressPhoto(event.target.files[0]);
+$("clear-photo").onclick = () => { resetNewPhoto(); refreshPhotoPreview(); };
+$("remove-photo").onchange = refreshPhotoPreview;
+for (const type of ["dragenter", "dragover"]) {
+    $("photo-dropzone").addEventListener(type, event => {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        $("photo-dropzone").classList.add("drag-over");
+    });
+}
+$("photo-dropzone").addEventListener("dragleave", event => {
+    if (!$("photo-dropzone").contains(event.relatedTarget)) $("photo-dropzone").classList.remove("drag-over");
+});
+$("photo-dropzone").addEventListener("drop", event => {
+    event.preventDefault();
+    $("photo-dropzone").classList.remove("drag-over");
+    if ($("save-progress").disabled) { say("Wait for the current save before adding a photo.", true); return; }
+    const files = event.dataTransfer?.files;
+    if (files?.length !== 1) { say("Drop one photo at a time.", true); return; }
+    selectProgressPhoto(files[0]);
+});
 
 function readPhoto(file) {
     return new Promise((resolve, reject) => {
         const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
 
-        if (!allowedTypes.includes(file.type) || file.size > 1024 * 1024) {
+        if (!allowedTypes.includes(file.type) || file.size > MAX_PHOTO_BYTES) {
             reject(new Error(
-                "Choose a JPEG, PNG or WebP up to 1 MB, " +
+                "Choose a JPEG, PNG or WebP up to 5 MB, " +
                 "or clear the photo selection to save without it."
             ));
             return;
@@ -998,7 +1114,7 @@ function showCompletionChoice(project) {
 }
 
 function setSessionBusy(busy) {
-    for (const id of ["save-progress", "complete-task", "leave", "toggle-timer"]) {
+    for (const id of ["save-progress", "complete-task", "leave", "toggle-timer", "choose-photo", "take-photo", "clear-photo", "photo", "camera-photo", "remove-photo"]) {
         $(id).disabled = busy;
     }
 }
@@ -1030,8 +1146,9 @@ $("progress-form").onsubmit = async event => {
 };
 
 async function captureProgress(session) {
+    if (photoReading) throw new Error("Your photo is still being prepared. Wait a moment, then save again.");
     let photo = $("remove-photo").checked ? "" : session.photo;
-    const file = $("photo").files[0];
+    const file = selectedPhoto;
     if (file && !$("remove-photo").checked) photo = await readPhoto(file);
     return {
         note: $("note").value.trim(),
@@ -1117,7 +1234,7 @@ function hasUnsavedProgress() {
 
     return (
         $("note").value.trim() !== session.note ||
-        $("photo").files.length > 0 ||
+        !!selectedPhoto || photoReading ||
         $("remove-photo").checked
     );
 }
@@ -1266,7 +1383,8 @@ async function changeAccount(nextUser) {
     $("preview").removeAttribute("src");
     $("active-goal").textContent = "";
     $("note").value = "";
-    $("photo").value = "";
+    savedPhotoUrl = "";
+    resetNewPhoto();
     $("goal").value = "";
     landing();
     if (user) { await loadCloud(); if (!hasUnsavedProgress() && !$("home").hidden) home(); }
