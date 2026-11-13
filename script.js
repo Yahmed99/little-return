@@ -60,6 +60,9 @@ syncChips();
 document.addEventListener("click", e => {
     const menu = document.querySelector(".account");
     if (menu.open && !menu.contains(e.target)) menu.open = false;
+    document.querySelectorAll(".project-menu[open]").forEach(projectMenu => {
+        if (!projectMenu.contains(e.target)) projectMenu.open = false;
+    });
 });
 
 let state = { hobbies: [], sessions: [] };
@@ -386,8 +389,8 @@ function home(tab = homeTab) {
             openSession(session.id);
         };
 
-        const remove = deleteButton(session);
-        card.append(title, note, time, button, renameControl(session), remove);
+        const { header, editor } = projectControls(session, title);
+        card.append(header, note, time, button, editor);
         $("saved").append(card);
     }
     $("saved-empty").hidden = sessions.some(item => !item.completedAt);
@@ -432,19 +435,50 @@ function renderCompletedProjects(projects) {
         open.type = "button";
         open.textContent = "View project";
         open.onclick = () => openProjectDetails(project.id);
-        card.append(title, meta, description, open, renameControl(project), deleteButton(project));
+        const { header, editor } = projectControls(project, title);
+        card.append(header, meta, description, open, editor);
         gallery.append(card);
     }
     $("completed-empty").hidden = projects.length > 0;
 }
 
-function renameControl(project) {
+function projectControls(project, title) {
+    const header = document.createElement("div");
+    header.className = "project-card-header";
+    const menu = document.createElement("details");
+    menu.className = "project-menu";
+    const trigger = document.createElement("summary");
+    trigger.id = `project-actions-${project.id}`;
+    trigger.textContent = "⋯";
+    trigger.setAttribute("aria-label", `Actions for ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    const panel = document.createElement("div");
+    panel.className = "project-menu-panel";
+    const editor = renameControl(project, menu, trigger);
+    const rename = editor.firstElementChild;
+    const remove = deleteButton(project);
+    panel.append(rename, remove);
+    menu.append(trigger, panel);
+    menu.onkeydown = event => {
+        if (event.key === "Escape") {
+            event.preventDefault();
+            menu.open = false;
+            trigger.focus();
+        }
+    };
+    menu.onfocusout = event => {
+        if (!menu.contains(event.relatedTarget)) menu.open = false;
+    };
+    header.append(title, menu);
+    return { header, editor };
+}
+
+function renameControl(project, menu = null, trigger = null, onSaved = null) {
     const container = document.createElement("div");
     container.className = "project-rename";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "secondary";
-    button.id = `rename-${project.id}`;
+    button.id = `${onSaved ? "detail-rename" : "rename"}-${project.id}`;
     button.textContent = "Rename project";
     button.setAttribute("aria-label", `Rename ${project.projectName || project.idea || names[project.hobby] + " project"}`);
     const form = document.createElement("form");
@@ -468,7 +502,8 @@ function renameControl(project) {
     const close = () => {
         form.hidden = true;
         button.hidden = false;
-        button.focus();
+        if (menu) menu.open = false;
+        (trigger || button).focus();
     };
     cancel.onclick = close;
     input.oninput = () => input.setCustomValidity("");
@@ -481,6 +516,7 @@ function renameControl(project) {
         input.value = current.projectName || current.idea || `${names[current.hobby]} project`;
         input.setCustomValidity("");
         button.hidden = true;
+        if (menu) menu.open = false;
         form.hidden = false;
         input.focus();
         input.select();
@@ -501,8 +537,9 @@ function renameControl(project) {
         try {
             const result = await saveSession({ ...current, projectName: name, updated: Date.now() });
             if (!result) return;
-            home(current.completedAt ? "gallery" : "projects");
-            document.getElementById(button.id)?.focus();
+            if (onSaved) await onSaved();
+            else home(current.completedAt ? "gallery" : "projects");
+            document.getElementById((trigger || button).id)?.focus();
         } finally {
             save.disabled = cancel.disabled = input.disabled = false;
         }
@@ -608,16 +645,18 @@ async function appendDetailPhoto(container, record, epoch, id) {
     }
 }
 
-async function openProjectDetails(id) {
+async function openProjectDetails(id, refresh = true) {
     const epoch = generation;
     let project = state.sessions.find(item => item.id === id);
     if (!project) return;
-    if (user && !project.pending) {
+    if (user && refresh && !project.pending) {
         try {
             const { data, error } = await client.from("sessions").select("*").eq("id", id).eq("user_id", user.id).single();
             if (error) throw error;
             if (epoch !== generation) return;
             project = fromRow(data);
+            state.sessions = state.sessions.map(item => item.id === id ? project : item);
+            writeCache(state);
         } catch (error) {
             if (epoch !== generation) return;
             say(`Could not refresh this project: ${error.message}. Showing the browser copy.`, true);
@@ -627,6 +666,7 @@ async function openProjectDetails(id) {
     detailId = id;
     $("detail-title").textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
     $("detail-meta").textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} total · ${project.taskHistory.length} goals completed`;
+    $("detail-rename").replaceChildren(renameControl(project, null, null, () => openProjectDetails(id, false)));
     const overview = $("detail-overview");
     overview.replaceChildren();
     appendDetailText(overview, "Original idea", project.idea);

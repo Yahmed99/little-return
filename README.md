@@ -35,7 +35,9 @@ Open http://localhost:8000/ (use the same hostname in Supabase redirect settings
 
 ## Storage and tradeoffs
 
-In-progress and finished project cards include **Rename project**. Enter a name (1–120 characters), then choose **Save name**; **Cancel** or Escape discards the edit. Renaming uses the existing guest/cloud save flow, including pending offline saves, and retains goals, notes, photos, tracked time, and completion status. No database migration is needed. JavaScript harness checks cover both project states, guest/cloud/offline saves, invalid names, cancellation, and storage failure/retry; cloud calls were mocked.
+The **View project** detail page also offers **Rename project** beneath its heading. Saving updates the heading while keeping the detail page open.
+
+In-progress and finished project cards have a three-dot actions dropdown containing **Rename project** and **Delete project**. Open it with a click, Enter, or Space; Tab reaches the actions, and Escape or clicking outside closes the dropdown. Renaming opens an inline name field (1–120 characters), with **Save name** and **Cancel**; Escape discards the edit. Renaming uses the existing guest/cloud save flow, including pending offline saves, and retains goals, notes, photos, tracked time, and completion status. No database migration is needed. JavaScript harness checks cover both project states, guest/cloud/offline saves, invalid names, cancellation, and storage failure/retry; cloud calls were mocked.
 
 Supabase is the signed-in source of truth; browser caches are scoped per account and kept separate from the original guest key `little-return-v1`. The SDK stores auth credentials in browser storage, as normal for a static client application. Signing out hides account caches but does not erase them: do not use shared browser profiles for sensitive notes.
 

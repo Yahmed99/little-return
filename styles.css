@@ -125,7 +125,17 @@ input[type=checkbox] { width: 1.3rem; height: 1.3rem; accent-color: var(--accent
 .card .preserve { max-height: 7em; overflow: auto; margin: 0 0 .75rem; }
 .card .hint { margin-top: auto; }
 .card > button { margin-top: .75rem; align-self: flex-start; }
-.project-rename { margin-top: .75rem; }
+.project-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; margin-bottom: .4rem; }
+.project-card-header h3 { min-width: 0; margin: .5rem 0 0; }
+.project-menu { position: relative; flex-shrink: 0; }
+.project-menu[open] { z-index: 10; }
+.project-menu summary { display: grid; place-items: center; list-style: none; width: 44px; min-height: 44px; border: 1px solid transparent; border-radius: var(--control-r); color: var(--accent); font-size: 1.6rem; line-height: 1; cursor: pointer; }
+.project-menu summary::-webkit-details-marker { display: none; }
+.project-menu summary:hover, .project-menu[open] summary { background: var(--tint); border-color: var(--line); }
+.project-menu-panel { position: absolute; top: calc(100% + .25rem); right: 0; width: 190px; padding: .3rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--control-r); box-shadow: 0 4px 12px rgb(43 43 43 / .1); }
+.project-menu-panel button { display: block; width: 100%; margin: 0; border: 0; text-align: left; }
+.project-menu-panel button:hover:not(:disabled) { background: var(--tint); }
+.project-rename form { margin-top: .75rem; }
 .project-rename input { margin-bottom: .5rem; }
 .card ol { padding-left: 1.3rem; margin: .5rem 0; }
 .empty { max-width: 56ch; padding: .5rem 0; }
