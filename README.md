@@ -40,7 +40,7 @@ Pending saves require explicit retry; they are never silently uploaded to a diff
 
 Concurrent saves use last-write-wins. Pending offline edits take precedence locally and overwrite the cloud version only when the user chooses sync. There is no background sync or realtime subscription; refresh loads cloud changes. Photos use temporary signed URLs valid for one hour; reopen a session to refresh. Photo replacement cleans up the old object after a successful row save; interrupted uploads and photo removals can leave unreferenced private files, which can be cleaned up later. Database and Storage writes are separate operations.
 
-The SQL includes delete policies; the existing interface has no delete-session action. No new delete UI was added.
+Active and finished project cards include Delete project, with a permanent-deletion confirmation. Finished project titles and View project open the full history. Cloud deletion uses the existing user-owned delete policy; a failed cloud request leaves the project available to refresh and retry. After deleting the row, the app removes referenced private photos; a cleanup failure is reported separately. Guest deletion updates browser storage only. Guest originals retained by an earlier import remain separate from the cloud copy.
 
 Official references: [email magic links](https://supabase.com/docs/reference/javascript/auth-signinwithotp), [Storage policies](https://supabase.com/docs/guides/storage/security/access-control), [signed photo URLs](https://supabase.com/docs/reference/javascript/storage-from-createsignedurl).
 
@@ -51,3 +51,9 @@ JavaScript syntax (`node --check script.js`) and patch whitespace checks passed.
 ## Task timer
 
 Opening an unfinished goal starts a countdown using its planned minutes. Pause/Resume controls exclude breaks. The timer pauses while the tab is hidden and resumes on return only if it was running. At zero it counts overtime; completion is always your choice. Saving or completing a goal stops the timer and persists the project total through the existing save flow. Completed goals keep time checkpoints in `task_history`, so the next goal gets a fresh countdown without resetting the project's total. No additional database columns are needed. For older goals without a checkpoint, existing tracked time is treated as time on the current goal until it is completed.
+
+## Project detail history
+
+Each newly completed goal snapshots its notes, photo, and tracked time in the existing `task_history` JSON field. Cloud history stores private storage paths, not image data URLs, and the detail screen uses temporary signed URLs. Photos referenced by completed goals are retained when the current photo changes. Old records only display history that was actually saved; overwritten notes and photos cannot be recovered. No new SQL migration is required for these snapshots.
+
+Validation: Firefox localhost checks passed for gallery navigation, historical comments/photos, guest and active-project deletion, canceling deletion, visible sign-in controls, and mobile sizing. Cloud deletion errors, retries and photo cleanup were tested with a mocked API; live Supabase authorization still requires the two-account checks above.

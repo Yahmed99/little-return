@@ -51,9 +51,21 @@ function updateHobbyExamples() {
 
 $("hobby").onchange = updateHobbyExamples;
 
+function syncChips() {
+    document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.min === $("minutes").value));
+}
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("minutes").value = c.dataset.min; syncChips(); });
+$("minutes").addEventListener("input", syncChips);
+syncChips();
+document.addEventListener("click", e => {
+    const menu = document.querySelector(".account");
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+});
+
 let state = { hobbies: [], sessions: [] };
 let draft;
 let activeId;
+let detailId = null;
 let blocked = false;
 let client = null;
 let user = null;
@@ -74,7 +86,8 @@ const pending = () => state.sessions.filter(item => item.pending);
 function accountUI() {
     $("account-label").textContent = user
         ? (pending().length ? "Unsynced changes" : cloudReady ? "Saved to account" : "Offline")
-        : "This browser";
+        : "Sign in";
+    $("login-banner").hidden = !!user;
     $("auth-form").hidden = !!user;
     $("sign-out").hidden = !user;
     $("import-local").hidden = !user || !guestCount;
@@ -197,18 +210,25 @@ async function uploadPhoto(session, owner) {
 
 async function persistCloud(session, owner) {
     const path = await uploadPhoto(session, owner);
+    const history = [];
+    for (const task of session.taskHistory || []) {
+        const storagePath = task.photo
+            ? (task.photo === session.photo ? path : await uploadPhoto({ ...session, ...task }, owner))
+            : task.storage_path || null;
+        history.push({ ...task, photo: "", storage_path: storagePath });
+    }
     const row = {
         id: session.id, user_id: owner.id, hobby: session.hobby, minutes: session.minutes,
         materials: session.materials, idea: session.idea, project_name: session.projectName || "",
         goal: session.goal, note: session.note,
         storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString(),
-        task_history: session.taskHistory || [], elapsed_seconds: session.elapsedSeconds || 0,
+        task_history: history, elapsed_seconds: session.elapsedSeconds || 0,
         goal_completed: !!session.goalCompleted, completed_at: session.completedAt || null
     };
     const { data, error } = await client.from("sessions").upsert(row).select().single();
     // If a response is lost, keep the upload: the database may already reference it.
     if (error) throw error;
-    if (session.storage_path && session.storage_path !== path) {
+    if (session.storage_path && session.storage_path !== path && !history.some(task => task.storage_path === session.storage_path)) {
         await client.storage.from(BUCKET).remove([session.storage_path]).catch(() => {});
     }
     return fromRow(data);
@@ -256,17 +276,22 @@ async function saveSession(session) {
     }
 }
 
+let sayTimer;
 function say(message = "", error = false) {
     $("status").textContent = error ? "" : message;
     $("error").textContent = error ? message : "";
+    clearTimeout(sayTimer);
+    if (message && !error) sayTimer = setTimeout(() => { $("status").textContent = ""; }, 6000);
 }
+for (const id of ["status", "error"]) $(id).onclick = () => say();
 
 function show(id) {
-    for (const view of ["setup", "home", "goal-screen", "session", "goal-done"]) {
+    for (const view of ["setup", "home", "goal-screen", "session", "goal-done", "project-detail"]) {
         $(view).hidden = view !== id;
     }
 
-    $(id).querySelector("h1").focus();
+    window.scrollTo(0, 0);
+    $(id).querySelector("h1").focus({ preventScroll: true });
 }
 
 function commit(next) {
@@ -338,6 +363,7 @@ function home(tab = homeTab) {
     for (const session of sessions.filter(item => !item.completedAt)) {
         const card = document.createElement("article");
         card.className = "card";
+        card.dataset.hobby = session.hobby;
 
         const title = document.createElement("h3");
         title.textContent =
@@ -360,7 +386,8 @@ function home(tab = homeTab) {
             openSession(session.id);
         };
 
-        card.append(title, note, time, button);
+        const remove = deleteButton(session);
+        card.append(title, note, time, button, remove);
         $("saved").append(card);
     }
     $("saved-empty").hidden = sessions.some(item => !item.completedAt);
@@ -387,29 +414,186 @@ function renderCompletedProjects(projects) {
     for (const project of projects) {
         const card = document.createElement("article");
         card.className = "card completed-card";
+        card.dataset.hobby = project.hobby;
         const title = document.createElement("h3");
         title.textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
         const meta = document.createElement("p");
         meta.className = "hint";
         meta.textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} · Completed ${new Date(project.completedAt).toLocaleDateString()}`;
-        const goals = document.createElement("ol");
-        for (const task of project.taskHistory) {
-            const item = document.createElement("li");
-            item.textContent = task.goal;
-            goals.append(item);
-        }
-        card.append(title, meta);
-        if (goals.childElementCount) card.append(goals);
-        if (project.note) {
-            const note = document.createElement("p");
-            note.className = "preserve";
-            note.textContent = project.note;
-            card.append(note);
-        }
+        const view = document.createElement("button");
+        view.type = "button";
+        view.className = "project-link";
+        view.textContent = title.textContent;
+        view.onclick = () => openProjectDetails(project.id);
+        title.replaceChildren(view);
+        const description = document.createElement("p");
+        description.textContent = `${project.taskHistory.length} completed goals · View notes and photos`;
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "View project";
+        open.onclick = () => openProjectDetails(project.id);
+        card.append(title, meta, description, open, deleteButton(project));
         gallery.append(card);
     }
     $("completed-empty").hidden = projects.length > 0;
 }
+
+function deleteButton(project) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "danger quiet";
+    button.textContent = "Delete project";
+    button.setAttribute("aria-label", `Delete ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    button.onclick = () => deleteProject(project.id, button);
+    return button;
+}
+
+function photoPaths(project) {
+    return [...new Set([project.storage_path, ...(project.taskHistory || []).map(task => task.storage_path)].filter(Boolean))];
+}
+
+async function deleteProject(id, button) {
+    if (saving) { say("Wait for the current save to finish before deleting.", true); return; }
+    const project = state.sessions.find(item => item.id === id);
+    if (!project || !confirm(`Permanently delete “${project.projectName || project.idea || names[project.hobby] + " project"}”? All its goals, notes and photos will be removed. This cannot be undone.`)) return;
+    const epoch = generation;
+    const owner = user;
+    const previous = state;
+    const next = { ...state, sessions: state.sessions.filter(item => item.id !== id) };
+    if (!writeCache(next)) { say("Could not update browser storage. Project was not deleted. Reload and try again.", true); return; }
+    saving = true;
+    button.disabled = true;
+    let cleanupFailed = false;
+    try {
+        if (owner) {
+            // Read the latest paths before deleting, including photos added on another device.
+            const { data, error: readError } = await client.from("sessions").select("*").eq("id", id).eq("user_id", owner.id).maybeSingle();
+            if (readError) throw readError;
+            if (epoch !== generation) return;
+            const paths = [...new Set([...photoPaths(project), ...(data ? photoPaths(fromRow(data)) : [])])];
+            const { error } = await client.from("sessions").delete().eq("id", id).eq("user_id", owner.id);
+            if (error) throw error;
+            if (paths.length) {
+                try {
+                    const { error: storageError } = await client.storage.from(BUCKET).remove(paths);
+                    cleanupFailed = !!storageError;
+                } catch { cleanupFailed = true; }
+            }
+        }
+        if (epoch !== generation) return;
+        state = next;
+        if (!owner) guestCount = state.sessions.length;
+        detailId = null;
+        home(project.completedAt ? "gallery" : "projects");
+        accountUI();
+        say(cleanupFailed ? "Project deleted. Some private photo files could not be removed; storage cleanup is still needed." : "Project deleted.", cleanupFailed);
+    } catch (error) {
+        if (epoch === generation) {
+            writeCache(previous);
+            say(`Could not confirm deletion: ${error.message}. Refresh projects before retrying.`, true);
+        }
+    } finally { saving = false; button.disabled = false; }
+}
+
+function appendDetailText(container, heading, value) {
+    if (!value) return;
+    const title = document.createElement("h3");
+    title.textContent = heading;
+    const text = document.createElement("p");
+    text.className = "preserve";
+    text.textContent = value;
+    container.append(title, text);
+}
+
+async function appendDetailPhoto(container, record, epoch, id) {
+    if (!record.photo && !record.storage_path) return;
+    const image = document.createElement("img");
+    image.className = "history-photo";
+    image.alt = "Saved project progress";
+    image.loading = "lazy";
+    let url = record.photo;
+    try {
+        if (!url && user) {
+            const { data, error } = await client.storage.from(BUCKET).createSignedUrl(record.storage_path, 3600);
+            if (error) throw error;
+            url = data.signedUrl;
+        }
+        if (epoch !== generation || detailId !== id || !container.isConnected) return;
+        if (!url || !(url.startsWith("https://") || /^data:image\/(jpeg|png|webp);base64,/.test(url))) throw new Error("Photo unavailable");
+        image.src = url;
+        image.onerror = () => { image.replaceWith(document.createTextNode("Photo unavailable. Reopen the project to retry.")); };
+        container.append(image);
+    } catch {
+        if (epoch === generation && detailId === id && container.isConnected) {
+            const message = document.createElement("p");
+            message.className = "hint";
+            message.textContent = "Photo unavailable. Reopen the project when connected to retry.";
+            container.append(message);
+        }
+    }
+}
+
+async function openProjectDetails(id) {
+    const epoch = generation;
+    let project = state.sessions.find(item => item.id === id);
+    if (!project) return;
+    if (user && !project.pending) {
+        try {
+            const { data, error } = await client.from("sessions").select("*").eq("id", id).eq("user_id", user.id).single();
+            if (error) throw error;
+            if (epoch !== generation) return;
+            project = fromRow(data);
+        } catch (error) {
+            if (epoch !== generation) return;
+            say(`Could not refresh this project: ${error.message}. Showing the browser copy.`, true);
+        }
+    }
+    if (epoch !== generation) return;
+    detailId = id;
+    $("detail-title").textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+    $("detail-meta").textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} total · ${project.taskHistory.length} goals completed`;
+    const overview = $("detail-overview");
+    overview.replaceChildren();
+    appendDetailText(overview, "Original idea", project.idea);
+    appendDetailText(overview, "Materials", project.materials);
+    appendDetailText(overview, "Latest notes", project.note || "No notes saved.");
+    const history = $("detail-history");
+    history.replaceChildren();
+    $("history-help").textContent = "Notes and photos are saved with each goal when it is marked done. Older goals may only include the goal text.";
+    for (const task of project.taskHistory) {
+        const item = document.createElement("li");
+        item.className = "panel";
+        const title = document.createElement("h3");
+        title.className = "preserve";
+        title.textContent = task.goal;
+        const meta = document.createElement("p");
+        meta.className = "hint";
+        meta.textContent = `Completed ${new Date(task.completedAt).toLocaleDateString()}` +
+            (Number.isFinite(task.elapsedSeconds) ? ` · ${formatTime(task.elapsedSeconds)}` : "");
+        item.append(title, meta);
+        appendDetailText(item, "Notes", task.note);
+        history.append(item);
+        appendDetailPhoto(item, task, epoch, id);
+    }
+    if (!project.taskHistory.length) {
+        const item = document.createElement("li");
+        item.className = "panel";
+        appendDetailText(item, "Saved goal", project.goal);
+        history.append(item);
+    }
+    $("detail-delete").onclick = () => deleteProject(id, $("detail-delete"));
+    show("project-detail");
+    appendDetailPhoto(overview, project, epoch, id);
+}
+
+$("detail-back").onclick = () => { detailId = null; home("gallery"); };
+document.querySelectorAll("[data-sign-in]").forEach(button => {
+    button.onclick = event => {
+        event.stopPropagation();
+        document.querySelector(".account").open = true;
+        $("email").focus();
+    };
+});
 
 function clockTime(seconds) {
     const total = Math.max(0, Math.floor(seconds));
@@ -433,6 +617,9 @@ function updateTimerLabel() {
     $("timer").textContent = (remaining < 0 ? "+" : "") + clockTime(Math.abs(remaining));
     $("timer").setAttribute("aria-label", remaining < 0 ? "Time beyond your planned duration" : "Time remaining");
     $("timer-detail").textContent = `${clockTime(elapsed)} on this goal · ${formatTime(session.elapsedSeconds)} on this project`;
+    const total = Math.max(1, session.minutes * 60);
+    $("ring").style.strokeDashoffset = String(339.292 * Math.min(1, elapsed / total));
+    $("timer").closest(".timer-box").classList.toggle("over", remaining < 0);
     const running = timerCheckpoint !== null;
     $("toggle-timer").textContent = running ? "Pause timer" : "Resume timer";
     const label = remaining <= 0
@@ -597,7 +784,7 @@ $("goal-form").onsubmit = async event => {
         const result = await saveSession(session);
         if (result) {
             if (startingNewProject) {
-                $("plan-form").reset();
+                $("plan-form").reset(); syncChips();
                 updateHobbyExamples();
             }
             homeTab = "projects";
@@ -751,6 +938,7 @@ $("complete-task").onclick = async () => {
             ...timed,
             ...captured,
             taskHistory: [...timed.taskHistory, { goal: timed.goal, completedAt: new Date().toISOString(),
+                note: captured.note, photo: captured.photo, storage_path: captured.storage_path || null,
                 projectElapsedSeconds: timed.elapsedSeconds, elapsedSeconds: taskSeconds(timed) }],
             goalCompleted: true,
             updated: Date.now()
@@ -801,7 +989,7 @@ $("finish-project").onclick = async () => {
         if (result) {
             activeId = null;
             home("gallery");
-            say("Project completed and added to your gallery.");
+            say("Project completed and moved to Finished.");
         }
     } finally { button.disabled = false; }
 };
@@ -950,6 +1138,10 @@ async function changeAccount(nextUser) {
     resumeTimerOnVisible = false;
     user = nextUser;
     activeId = null;
+    detailId = null;
+    $("detail-history").replaceChildren();
+    $("detail-overview").replaceChildren();
+    $("detail-title").textContent = "Project details";
     draft = null;
     cloudReady = false;
     blocked = false;

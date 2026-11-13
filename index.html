@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#245a45">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d5c4a">
   <title>Little Return — A little time for what you love</title>
   <link rel="stylesheet" href="styles.css">
   <script src="supabase-config.js" defer></script>
@@ -11,169 +11,208 @@
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header><a class="brand" href="./">Little Return<span>A little time for what you love.</span></a></header>
+  <header class="site-header">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">↺</span><span>Little Return<small>A little time for what you love.</small></span></a>
+    <details class="account">
+      <summary><span class="dot" aria-hidden="true"></span><span id="account-label" class="account-label">Sign in</span></summary>
+      <div class="account-content">
+        <p id="sync-status" class="hint" role="status">Your projects are saved on this browser. Sign in to use them on other devices.</p>
+        <form id="auth-form">
+          <label for="email">Email address</label>
+          <div class="auth-row">
+            <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            <button id="sign-in" type="submit">Email me a sign-in link</button>
+          </div>
+          <p class="hint">No password. We’ll email you a link.</p>
+        </form>
+        <button id="sign-out" type="button" class="secondary" hidden>Sign out</button>
+        <button id="import-local" type="button" class="secondary" hidden>Copy browser projects to my account</button>
+        <button id="sync-now" type="button" class="secondary" hidden>Retry cloud sync</button>
+      </div>
+    </details>
+  </header>
+
   <main id="main">
     <p id="status" role="status" aria-live="polite"></p>
     <p id="error" role="alert"></p>
-    <details class="account">
-      <summary>Your account <span id="account-label" class="account-label">This browser</span></summary>
-      <div class="account-content">
-      <p id="sync-status" class="hint" role="status">Your projects are saved on this browser. Sign in to use them on other devices.</p>
-      <form id="auth-form">
-        <p>Sign in to access your projects on other devices. We’ll email you a sign-in link.</p>
-        <label for="email">Email address</label>
-        <div class="auth-row">
-          <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-          <button id="sign-in" type="submit">Email me a sign-in link</button>
-        </div>
-      </form>
-      <button id="sign-out" type="button" class="secondary" hidden>Sign out</button>
-      <button id="import-local" type="button" class="secondary" hidden>Copy browser projects to my account</button>
-      <button id="sync-now" type="button" class="secondary" hidden>Retry cloud sync</button>
-      </div>
-    </details>
+    <aside id="login-banner" class="login-banner" aria-label="Save across devices">
+      <div><strong>Keep your projects with you</strong><p>Sign in with your email to save and open projects on any device.</p></div>
+      <button type="button" data-sign-in>Sign in</button>
+    </aside>
     <noscript>Enable JavaScript to create and save projects.</noscript>
 
     <section id="setup" hidden aria-labelledby="setup-title">
-      <h1 id="setup-title" tabindex="-1">Choose your hobbies</h1>
-      <p>Choose what you enjoy. You can change this later.</p>
-      <form id="setup-form" class="card">
-        <fieldset><legend>Your hobbies</legend>
-          <label class="choice"><input type="checkbox" name="hobbies" value="drawing"> Drawing</label>
-          <label class="choice"><input type="checkbox" name="hobbies" value="reading"> Reading</label>
-          <label class="choice"><input type="checkbox" name="hobbies" value="journaling"> Journaling</label>
+      <h1 id="setup-title" tabindex="-1">Make a little time for what you love</h1>
+      <p class="lead">Little Return helps you take one small, doable step on a hobby, then pick it up again later.</p>
+      <ol class="how">
+        <li><div><strong>Pick a hobby and a time.</strong> Even 10 minutes counts.</div></li>
+        <li><div><strong>Get a small goal.</strong> We suggest one; you can change it.</div></li>
+        <li><div><strong>Work with a timer.</strong> Save a note so you can return easily.</div></li>
+      </ol>
+      <form id="setup-form">
+        <fieldset><legend>Which hobbies do you enjoy? <span class="hint">You can change this later.</span></legend>
+          <div class="hobby-picker">
+            <label class="hobby-option" data-hobby="drawing"><input type="checkbox" name="hobbies" value="drawing"><span><strong>Drawing</strong><small>Sketch, doodle, practise</small></span></label>
+            <label class="hobby-option" data-hobby="reading"><input type="checkbox" name="hobbies" value="reading"><span><strong>Reading</strong><small>Books, articles, chapters</small></span></label>
+            <label class="hobby-option" data-hobby="journaling"><input type="checkbox" name="hobbies" value="journaling"><span><strong>Journaling</strong><small>Reflect and write</small></span></label>
+          </div>
         </fieldset>
-        <button type="submit">Continue to projects</button>
-        <button type="button" id="cancel-setup" class="secondary" hidden>Cancel</button>
+        <div class="actions"><button type="submit">Continue</button>
+        <button type="button" id="cancel-setup" class="secondary" hidden>Cancel</button></div>
       </form>
     </section>
 
     <section id="home" hidden aria-labelledby="home-title">
       <h1 id="home-title" tabindex="-1">Your projects</h1>
-      <p class="home-intro">Continue where you left off, or start something new.</p>
+      <p class="lead">Continue where you left off, or start something new.</p>
       <div class="project-tabs" role="tablist" aria-label="Your projects">
-        <button id="tab-projects" type="button" role="tab" aria-selected="true" aria-controls="panel-projects" tabindex="0">In progress <span id="projects-count" class="tab-count">0</span></button>
-        <button id="tab-gallery" type="button" role="tab" aria-selected="false" aria-controls="panel-gallery" tabindex="-1">Gallery <span id="gallery-count" class="tab-count">0</span></button>
-        <button id="tab-new" type="button" role="tab" aria-selected="false" aria-controls="panel-new" tabindex="-1">New project</button>
+        <button id="tab-projects" type="button" role="tab" aria-selected="true" aria-controls="panel-projects" tabindex="0"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg><span>In progress</span><b id="projects-count" class="tab-count">0</b></button>
+        <button id="tab-new" type="button" role="tab" aria-selected="false" aria-controls="panel-new" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New project</span></button>
+        <button id="tab-gallery" type="button" role="tab" aria-selected="false" aria-controls="panel-gallery" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><span>Finished</span><b id="gallery-count" class="tab-count">0</b></button>
       </div>
+
       <section id="panel-projects" class="tab-panel" role="tabpanel" aria-labelledby="tab-projects" tabindex="0">
-      <h2>Projects in progress</h2>
-      <div id="saved" class="saved-grid" aria-label="Saved activities"></div>
-      <div id="saved-empty" class="empty-state">
-        <p>No projects in progress.</p>
-        <p class="hint">Choose something you’d like to spend a little time on.</p>
-        <button type="button" data-open-new>Start a project</button>
-      </div>
-      </section>
-      <section id="panel-gallery" class="tab-panel gallery" role="tabpanel" aria-labelledby="tab-gallery" tabindex="0" hidden>
-        <h2 id="gallery-title">Completed projects</h2>
-        <div id="completed-empty" class="empty-state">
-          <p>No finished projects yet.</p>
-          <p class="hint">Finish a project to keep a record of your goals and time here.</p>
-          <button type="button" class="secondary" data-open-projects>Go to in progress</button>
+        <div id="saved" class="grid" aria-label="Projects in progress"></div>
+        <div id="saved-empty" class="empty">
+          <h2>Start your first project</h2>
+          <p>A <strong>project</strong> is what you’re working on, like “Garden sketches”. A <strong>goal</strong> is one small step you can do today.</p>
+          <ol class="how step-cards">
+            <li><div><h3>Choose</h3><p>Pick a hobby and how many minutes you have.</p></div></li>
+            <li><div><h3>Work</h3><p>Take one small step with the built-in timer.</p></div></li>
+            <li><div><h3>Save</h3><p>Leave a note so you can pick up where you stopped.</p></div></li>
+          </ol>
+          <button type="button" data-open-new>Start a project</button>
         </div>
-        <div id="completed-projects" class="saved-grid" aria-label="Completed projects"></div>
       </section>
+
       <section id="panel-new" class="tab-panel" role="tabpanel" aria-labelledby="tab-new" tabindex="0" hidden>
-      <div class="panel-heading"><h2>Start a project</h2><p>A project is what you’re working on. A goal is one small step you can take today.</p></div>
-      <form id="plan-form" class="form-surface">
-        <fieldset class="form-group">
-          <legend>What would you like to do?</legend>
-          <div class="columns">
-            <div><label for="hobby">Hobby</label><select id="hobby"></select></div>
-            <div><label for="minutes">Time for this goal <span>(minutes)</span></label>
-              <input id="minutes" type="number" min="1" max="180" step="1" value="20" required>
+        <h2>Start a project</h2>
+        <p class="hint">Step 1 of 3 · Tell us what you’d like to do. We’ll suggest a goal next.</p>
+        <form id="plan-form" class="panel">
+          <fieldset class="group">
+            <legend>What would you like to do?</legend>
+            <div class="columns">
+              <div><label for="hobby">Hobby</label><select id="hobby"></select></div>
+              <div><label for="minutes">Time for this goal <span>(minutes)</span></label>
+                <input id="minutes" type="number" inputmode="numeric" min="1" max="180" step="1" value="20" required>
+                <div class="chips" aria-label="Quick time choices">
+                  <button type="button" class="chip" data-min="10">10</button><button type="button" class="chip" data-min="20">20</button><button type="button" class="chip" data-min="30">30</button><button type="button" class="chip" data-min="45">45</button>
+                </div>
+              </div>
             </div>
-          </div>
-          <p id="hobby-help" class="hint"></p>
-        </fieldset>
-        <fieldset class="form-group">
-          <legend>Give it a little detail <span class="hint">— all optional</span></legend>
-          <label for="project-name">Project name</label>
-          <input id="project-name" maxlength="120" placeholder="For example: Garden sketches">
-          <label id="idea-label" for="idea">What would you like to draw?</label>
-          <input id="idea" maxlength="200" placeholder="For example: a sunflower" aria-describedby="idea-help">
-          <p id="idea-help" class="hint"></p>
-          <label id="materials-label" for="materials">Drawing supplies</label>
-          <input id="materials" maxlength="200" placeholder="For example: pencil and sketchbook" aria-describedby="materials-help">
-          <p id="materials-help" class="hint"></p>
-        </fieldset>
-        <div class="form-actions"><button type="submit">Suggest my first goal</button><p class="hint">You can edit the suggestion before you start.</p></div>
-      </form>
-      <button id="edit-hobbies" type="button" class="secondary">Change my hobbies</button>
+            <p id="hobby-help" class="hint"></p>
+          </fieldset>
+          <fieldset class="group">
+            <legend>Add a little detail <span class="hint">All optional</span></legend>
+            <label for="project-name">Project name</label>
+            <input id="project-name" maxlength="120" placeholder="For example: Garden sketches">
+            <label id="idea-label" for="idea">What would you like to draw?</label>
+            <input id="idea" maxlength="200" placeholder="For example: a sunflower" aria-describedby="idea-help">
+            <p id="idea-help" class="hint"></p>
+            <label id="materials-label" for="materials">Drawing supplies</label>
+            <input id="materials" maxlength="200" placeholder="For example: pencil and sketchbook" aria-describedby="materials-help">
+            <p id="materials-help" class="hint"></p>
+          </fieldset>
+          <div class="actions"><button type="submit">Suggest my first goal</button><span class="hint">You can edit the suggestion before you start.</span></div>
+        </form>
+        <button id="edit-hobbies" type="button" class="secondary">Change my hobbies</button>
+      </section>
+
+      <section id="panel-gallery" class="tab-panel" role="tabpanel" aria-labelledby="tab-gallery" tabindex="0" hidden>
+        <h2 id="gallery-title">Finished projects</h2>
+        <div id="completed-empty" class="empty">
+          <p>No finished projects yet.</p>
+          <p class="hint">When a whole project is done, it moves here with a record of your goals and time.</p>
+          <button type="button" class="secondary" data-open-projects>See projects in progress</button>
+        </div>
+        <div id="completed-projects" class="grid" aria-label="Finished projects"></div>
       </section>
     </section>
 
+    <section id="project-detail" hidden aria-labelledby="detail-title">
+      <button id="detail-back" type="button" class="quiet">Back to finished projects</button>
+      <h1 id="detail-title" tabindex="-1">Project details</h1>
+      <p id="detail-meta" class="hint"></p>
+      <section class="panel" aria-labelledby="detail-overview-title">
+        <h2 id="detail-overview-title">Project overview</h2><div id="detail-overview"></div>
+      </section>
+      <section aria-labelledby="detail-history-title"><h2 id="detail-history-title">Goals and progress</h2>
+        <p id="history-help" class="hint"></p><ol id="detail-history" class="project-history"></ol>
+      </section>
+      <div class="panel"><h2>Delete this project</h2><p>This permanently removes the project, its notes, and saved photos.</p>
+        <button id="detail-delete" type="button" class="danger">Delete project</button></div>
+    </section>
+
     <section id="goal-screen" hidden aria-labelledby="goal-title">
-      <p class="eyebrow">Plan your next step</p>
+      <p class="step">Step 2 of 3</p>
       <h1 id="goal-title" tabindex="-1">Choose a goal for today</h1>
-      <form id="goal-form" class="card">
-        <p id="goal-context"></p>
+      <form id="goal-form" class="panel">
+        <p id="goal-context" class="context"></p>
         <label for="goal">Your goal</label>
         <textarea id="goal" rows="5" maxlength="1200" required></textarea>
-        <p class="hint">Edit this suggestion so it feels achievable in the time you have.</p>
-        <button type="submit">Start this goal</button>
-        <button id="back" type="button" class="secondary">Back to project details</button>
+        <p class="hint">This is a suggestion. Edit it so it feels doable in the time you have.</p>
+        <div class="actions"><button type="submit">Start this goal</button>
+        <button id="back" type="button" class="secondary">Back to project details</button></div>
       </form>
     </section>
 
     <section id="session" hidden aria-labelledby="session-title">
-      <p class="eyebrow" id="session-hobby">Your project</p>
+      <p class="step">Step 3 of 3 · <span id="session-hobby">Your project</span></p>
       <h1 id="session-title" tabindex="-1">Work on your goal</h1>
       <p id="session-meta" class="hint"></p>
-      <div class="work-layout">
-        <section class="goal-summary" aria-labelledby="current-goal-title">
+      <div class="work">
+        <section class="panel goal-box" aria-labelledby="current-goal-title">
           <h2 id="current-goal-title">Your goal for today</h2>
           <p id="active-goal" class="preserve"></p>
         </section>
-        <section class="task-timer" aria-labelledby="timer-title">
-          <div>
-            <h2 id="timer-title">Time remaining</h2>
+        <section class="panel timer-box" aria-labelledby="timer-title">
+          <h2 id="timer-title" class="sr">Time remaining</h2>
+          <div class="ring">
+            <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="track" cx="60" cy="60" r="54"/><circle id="ring" class="arc" cx="60" cy="60" r="54"/></svg>
             <p id="timer" class="timer" role="timer" aria-live="off" aria-label="Time remaining">00:00</p>
-            <p id="timer-detail" class="hint"></p>
           </div>
-          <div class="timer-actions">
-            <button id="toggle-timer" type="button" class="secondary">Pause timer</button>
-            <p id="timer-state" class="hint" role="status">Running</p>
-          </div>
+          <p id="timer-detail" class="hint"></p>
+          <button id="toggle-timer" type="button" class="secondary">Pause timer</button>
+          <p id="timer-state" class="hint" role="status">Running</p>
           <p id="timer-help" class="hint">The timer keeps going after zero. You decide when to stop.</p>
         </section>
       </div>
-        <form id="progress-form" class="form-surface progress-surface">
-          <h2>Save your place</h2>
-          <p class="hint">Leave a note for next time. You don’t have to finish your goal to save.</p>
-          <label for="note">Notes for next time <span>(optional)</span></label>
-          <textarea id="note" rows="4" maxlength="2000" placeholder="Outline finished. Next time: add the eyes and wings."></textarea>
-          <details id="photo-controls" class="photo-section">
-            <summary>Add or change a progress photo</summary>
-            <label for="photo">Progress photo <span>(optional)</span></label>
-            <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help">
-            <p id="photo-help" class="hint">JPEG, PNG or WebP, up to 1 MB. You can always save without a photo. A new photo replaces the previous one.</p>
-            <img id="preview" alt="Your saved progress" hidden>
-            <label id="remove-wrap" class="choice" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
-          </details>
-          <div class="form-actions"><button id="save-progress" type="submit">Save &amp; close</button>
-          <button id="leave" type="button" class="secondary">Close without saving edits</button></div>
-          <div class="completion-action"><div><h2>Finished this goal?</h2><p class="hint">Save your notes and mark this step as done.</p></div>
-          <button id="complete-task" type="button" class="secondary">Mark goal as done</button></div>
-        </form>
+      <form id="progress-form" class="panel">
+        <h2>Save your place</h2>
+        <p class="hint">Leave a note for next time. You don’t have to finish your goal to save.</p>
+        <label for="note">Notes for next time <span>(optional)</span></label>
+        <textarea id="note" rows="4" maxlength="2000" placeholder="Outline finished. Next time: add the eyes and wings."></textarea>
+        <details id="photo-controls" class="photo-section">
+          <summary>Add or change a progress photo</summary>
+          <label for="photo">Progress photo <span>(optional)</span></label>
+          <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help">
+          <p id="photo-help" class="hint">JPEG, PNG or WebP, up to 1 MB. A new photo replaces the previous one.</p>
+          <img id="preview" alt="Your saved progress" hidden>
+          <label id="remove-wrap" class="check" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
+        </details>
+        <div class="actions">
+          <button id="complete-task" type="button">Mark goal as done</button>
+          <button id="save-progress" type="submit" class="secondary">Save &amp; close</button>
+          <button id="leave" type="button" class="quiet">Close without saving edits</button>
+        </div>
+      </form>
     </section>
 
     <section id="goal-done" hidden aria-labelledby="done-title">
-      <p class="eyebrow">A goal completed</p>
-      <h1 id="done-title" tabindex="-1">Goal done. What’s next?</h1>
-      <div class="card">
-        <p id="done-project-title" class="eyebrow"></p>
+      <p class="step">Goal complete</p>
+      <h1 id="done-title" tabindex="-1">Nice work. What’s next?</h1>
+      <div class="panel">
+        <p id="done-project-title" class="context"></p>
         <p id="done-task" class="preserve"></p>
         <p id="done-project-time" class="hint"></p>
-        <div class="next-choice"><h2>There’s more to do</h2><p>Keep this project in progress and choose another small goal.</p>
+        <div class="choice-row"><div><h2>There’s more to do</h2><p>Keep this project in progress and pick another small goal.</p></div>
         <button id="continue-project" type="button">Plan the next goal</button></div>
-        <div class="next-choice"><h2>The whole project is finished</h2><p>Move it to your Gallery with a record of the goals you completed.</p>
+        <div class="choice-row"><div><h2>The whole project is finished</h2><p>Move it to Finished with a record of your goals.</p></div>
         <button id="finish-project" type="button" class="secondary">Finish project</button></div>
-        <button id="done-home" type="button" class="secondary">Decide later · back to projects</button>
+        <button id="done-home" type="button" class="quiet">Decide later · back to projects</button>
       </div>
     </section>
   </main>
-  <footer>Without an account, projects stay on this browser. Clearing browser data removes them. Sign out when using a shared device.</footer>
+  <footer>Without an account, projects stay on this browser, and clearing browser data removes them. Sign out when using a shared device.</footer>
 </body>
 </html>
