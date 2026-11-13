@@ -9,9 +9,66 @@ const names = {
     journaling: "Journaling"
 };
 
+// Example copy changes with the hobby; user-entered values are never replaced.
+const hobbyCopy = {
+    drawing: {
+        project: "For example: Garden sketches", ideaLabel: "What would you like to draw?",
+        idea: "For example: a sunflower", ideaHelp: "A subject or technique you’d like to practise.",
+        materialsLabel: "Drawing supplies", materials: "For example: pencil and sketchbook",
+        materialsHelp: "Include the tools you have, such as a tablet or watercolors.",
+        help: "Choose a subject and we’ll suggest a manageable drawing goal.",
+        note: "For example: Outline finished. Next time, shade the petals."
+    },
+    reading: {
+        project: "For example: Reading The Secret Garden", ideaLabel: "What would you like to read?",
+        idea: "For example: chapter 3 of The Secret Garden", ideaHelp: "A book, article, or the chapter you want to start with.",
+        materialsLabel: "What are you reading with?", materials: "For example: paperback, e-reader, or library app",
+        materialsHelp: "Leave this blank if you already have something to read.",
+        help: "Choose something to read and we’ll suggest a short reading session.",
+        note: "For example: Stopped at page 42. Start with chapter 4 next time."
+    },
+    journaling: {
+        project: "For example: My weekly reflections", ideaLabel: "What would you like to write about?",
+        idea: "For example: something I’m looking forward to", ideaHelp: "A topic or question. Leave it blank for a simple reflection prompt.",
+        materialsLabel: "Where will you write?", materials: "For example: notebook and pen, or a notes app",
+        materialsHelp: "Use whatever is comfortable: paper or a digital journal.",
+        help: "Choose a topic and we’ll suggest a small writing goal.",
+        note: "For example: Wrote about this week. Next time, reflect on what helped."
+    }
+};
+
+function updateHobbyExamples() {
+    const copy = hobbyCopy[$("hobby").value] || hobbyCopy.drawing;
+    $("project-name").placeholder = copy.project;
+    $("idea-label").textContent = copy.ideaLabel;
+    $("idea").placeholder = copy.idea;
+    $("idea-help").textContent = copy.ideaHelp;
+    $("materials-label").textContent = copy.materialsLabel;
+    $("materials").placeholder = copy.materials;
+    $("materials-help").textContent = copy.materialsHelp;
+    $("hobby-help").textContent = copy.help;
+}
+
+$("hobby").onchange = updateHobbyExamples;
+
+function syncChips() {
+    document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.min === $("minutes").value));
+}
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("minutes").value = c.dataset.min; syncChips(); });
+$("minutes").addEventListener("input", syncChips);
+syncChips();
+document.addEventListener("click", e => {
+    const menu = document.querySelector(".account");
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+    document.querySelectorAll(".project-menu[open]").forEach(projectMenu => {
+        if (!projectMenu.contains(e.target)) projectMenu.open = false;
+    });
+});
+
 let state = { hobbies: [], sessions: [] };
 let draft;
 let activeId;
+let detailId = null;
 let blocked = false;
 let client = null;
 let user = null;
@@ -19,21 +76,30 @@ let cloudReady = false;
 let generation = 0;
 let saving = false;
 let guestCount = 0;
+let homeTab = "projects";
+let timerInterval = null;
+let timerCheckpoint = null;
+let timerWrites = 0;
+let resumeTimerOnVisible = false;
 const BUCKET = "progress-photos";
 const emptyState = () => ({ hobbies: [], sessions: [] });
 const cacheKey = () => user ? `${KEY}:user:${user.id}` : KEY;
 const pending = () => state.sessions.filter(item => item.pending);
 
 function accountUI() {
+    $("account-label").textContent = user
+        ? (pending().length ? "Unsynced changes" : cloudReady ? "Saved to account" : "Offline")
+        : "Sign in";
+    $("login-banner").hidden = !!user;
     $("auth-form").hidden = !!user;
     $("sign-out").hidden = !user;
     $("import-local").hidden = !user || !guestCount;
     $("sync-now").hidden = !user;
-    $("sync-now").textContent = pending().length ? "Sync pending saves" : "Refresh cloud sessions";
+    $("sync-now").textContent = pending().length ? "Save pending changes" : "Refresh saved projects";
     $("sign-in").disabled = !client;
     $("sync-status").textContent = user
-        ? `${user.email} · ${pending().length ? `${pending().length} save(s) on this browser awaiting sync.` : cloudReady ? "Cloud connected." : "Cloud unavailable — using this account’s browser fallback."}`
-        : "Local only — not synced to a cloud account.";
+        ? `${user.email} · ${pending().length ? `${pending().length} project(s) saved on this browser, waiting to upload.` : cloudReady ? "Your projects are saved to your account." : "Offline. Showing projects saved on this browser."}`
+        : "Your projects are saved on this browser. Sign in to use them on other devices.";
 }
 
 function readCache(key) {
@@ -46,10 +112,25 @@ function readCache(key) {
                 item && typeof item.id === "string" && Object.hasOwn(names, item.hobby) &&
                 ["goal", "note", "materials", "idea"].every(k => typeof item[k] === "string") &&
                 Number.isFinite(item.minutes) && Number.isFinite(item.updated) &&
+                (!item.projectName || (typeof item.projectName === "string" && item.projectName.length <= 120)) &&
+                (!item.taskHistory || (Array.isArray(item.taskHistory) && item.taskHistory.every(task =>
+                    task && typeof task.goal === "string" && typeof task.completedAt === "string"))) &&
+                (!item.elapsedSeconds || (Number.isFinite(item.elapsedSeconds) && item.elapsedSeconds >= 0)) &&
+                (!item.completedAt || typeof item.completedAt === "string") &&
                 (!item.photo || /^data:image\/(jpeg|png|webp);base64,/.test(item.photo)))) {
             throw new Error("Invalid browser data");
         }
-        return data;
+        return {
+            ...data,
+            sessions: data.sessions.map(item => ({
+                ...item,
+                projectName: item.projectName || "",
+                taskHistory: item.taskHistory || [],
+                elapsedSeconds: item.elapsedSeconds || 0,
+                goalCompleted: !!item.goalCompleted,
+                completedAt: item.completedAt || null
+            }))
+        };
     } catch {
         blocked = true;
         say("Browser fallback could not be loaded. It has not been overwritten. Cloud saves can still be used; check browser storage before saving locally.", true);
@@ -66,7 +147,17 @@ function writeCache(next) {
 }
 
 function fromRow(row) {
-    return { ...row, photo: "", updated: Date.parse(row.updated_at), pending: false };
+    return {
+        ...row,
+        photo: "",
+        updated: Date.parse(row.updated_at),
+        projectName: row.project_name || "",
+        taskHistory: row.task_history || [],
+        elapsedSeconds: row.elapsed_seconds || 0,
+        goalCompleted: !!row.goal_completed,
+        completedAt: row.completed_at || null,
+        pending: false
+    };
 }
 
 function inferHobbies() {
@@ -122,15 +213,25 @@ async function uploadPhoto(session, owner) {
 
 async function persistCloud(session, owner) {
     const path = await uploadPhoto(session, owner);
+    const history = [];
+    for (const task of session.taskHistory || []) {
+        const storagePath = task.photo
+            ? (task.photo === session.photo ? path : await uploadPhoto({ ...session, ...task }, owner))
+            : task.storage_path || null;
+        history.push({ ...task, photo: "", storage_path: storagePath });
+    }
     const row = {
         id: session.id, user_id: owner.id, hobby: session.hobby, minutes: session.minutes,
-        materials: session.materials, idea: session.idea, goal: session.goal, note: session.note,
-        storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString()
+        materials: session.materials, idea: session.idea, project_name: session.projectName || "",
+        goal: session.goal, note: session.note,
+        storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString(),
+        task_history: history, elapsed_seconds: session.elapsedSeconds || 0,
+        goal_completed: !!session.goalCompleted, completed_at: session.completedAt || null
     };
     const { data, error } = await client.from("sessions").upsert(row).select().single();
     // If a response is lost, keep the upload: the database may already reference it.
     if (error) throw error;
-    if (session.storage_path && session.storage_path !== path) {
+    if (session.storage_path && session.storage_path !== path && !history.some(task => task.storage_path === session.storage_path)) {
         await client.storage.from(BUCKET).remove([session.storage_path]).catch(() => {});
     }
     return fromRow(data);
@@ -157,7 +258,7 @@ async function saveSession(session) {
                     return false;
                 }
                 state = next;
-                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Sync pending saves to retry.`, true);
+                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Save pending changes to retry.`, true);
                 return "local";
             }
         }
@@ -178,17 +279,22 @@ async function saveSession(session) {
     }
 }
 
+let sayTimer;
 function say(message = "", error = false) {
     $("status").textContent = error ? "" : message;
     $("error").textContent = error ? message : "";
+    clearTimeout(sayTimer);
+    if (message && !error) sayTimer = setTimeout(() => { $("status").textContent = ""; }, 6000);
 }
+for (const id of ["status", "error"]) $(id).onclick = () => say();
 
 function show(id) {
-    for (const view of ["setup", "home", "goal-screen", "session"]) {
+    for (const view of ["setup", "home", "goal-screen", "session", "goal-done", "project-detail"]) {
         $(view).hidden = view !== id;
     }
 
-    $(id).querySelector("h1").focus();
+    window.scrollTo(0, 0);
+    $(id).querySelector("h1").focus({ preventScroll: true });
 }
 
 function commit(next) {
@@ -209,111 +315,498 @@ function setup() {
     show("setup");
 }
 
-function home() {
+// Keep tab state in memory: switching panels never resets a partially filled form.
+const homeTabs = ["projects", "gallery", "new"];
+
+function selectHomeTab(tab, focus = false) {
+    if (!homeTabs.includes(tab)) return;
+    homeTab = tab;
+    for (const name of homeTabs) {
+        const selected = name === tab;
+        $("tab-" + name).setAttribute("aria-selected", String(selected));
+        $("tab-" + name).tabIndex = selected ? 0 : -1;
+        $("panel-" + name).hidden = !selected;
+    }
+    if (focus) $("tab-" + tab).focus();
+}
+
+for (const tab of homeTabs) {
+    $("tab-" + tab).onclick = () => selectHomeTab(tab);
+    $("tab-" + tab).onkeydown = event => {
+        const index = homeTabs.indexOf(tab);
+        let next;
+        if (event.key === "ArrowRight") next = homeTabs[(index + 1) % homeTabs.length];
+        if (event.key === "ArrowLeft") next = homeTabs[(index + homeTabs.length - 1) % homeTabs.length];
+        if (event.key === "Home") next = homeTabs[0];
+        if (event.key === "End") next = homeTabs[homeTabs.length - 1];
+        if (next) { event.preventDefault(); selectHomeTab(next, true); }
+    };
+}
+document.querySelectorAll("[data-open-new]").forEach(button => {
+    button.onclick = () => { selectHomeTab("new"); $("project-name").focus(); };
+});
+document.querySelectorAll("[data-open-projects]").forEach(button => {
+    button.onclick = () => selectHomeTab("projects", true);
+});
+
+function home(tab = homeTab) {
+    const selectedHobby = $("hobby").value;
     $("hobby").replaceChildren(
         ...state.hobbies.map(hobby => new Option(names[hobby], hobby))
     );
 
+    if (state.hobbies.includes(selectedHobby)) $("hobby").value = selectedHobby;
+    updateHobbyExamples();
     $("saved").replaceChildren();
 
     const sessions = [...state.sessions].sort(
         (a, b) => b.updated - a.updated
     );
 
-    for (const session of sessions) {
+    for (const session of sessions.filter(item => !item.completedAt)) {
         const card = document.createElement("article");
         card.className = "card";
+        card.dataset.hobby = session.hobby;
 
-        const title = document.createElement("h2");
+        const title = document.createElement("h3");
         title.textContent =
-        session.idea || `${names[session.hobby]} in progress`;
+        session.projectName || session.idea || `${names[session.hobby]} in progress`;
 
         const note = document.createElement("p");
         note.className = "preserve";
         note.textContent = session.note || session.goal;
 
+        const time = document.createElement("p");
+        time.className = "hint project-time";
+        time.textContent = `${names[session.hobby]} · ${formatTime(session.elapsedSeconds)} total · ${session.taskHistory.length} goal${session.taskHistory.length === 1 ? "" : "s"} done`;
+
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = `Continue ${session.hobby}`;
+        button.textContent = session.goalCompleted ? "Choose next step" : "Continue project";
 
         button.onclick = () => {
             say();
             openSession(session.id);
         };
 
-        card.append(title, note, button);
+        const { header, editor } = projectControls(session, title);
+        card.append(header, note, time, button, editor);
         $("saved").append(card);
     }
+    $("saved-empty").hidden = sessions.some(item => !item.completedAt);
 
+    const completed = sessions.filter(item => item.completedAt);
+    renderCompletedProjects(completed);
+    $("projects-count").textContent = sessions.length - completed.length;
+    $("gallery-count").textContent = completed.length;
+    selectHomeTab(tab);
     show("home");
 }
 
+function formatTime(seconds = 0) {
+    if (seconds < 60) return `${seconds}s`;
+    const totalMinutes = Math.floor(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return hours ? `${hours}h ${minutes}m` : `${totalMinutes}m`;
+}
+
+function renderCompletedProjects(projects) {
+    const gallery = $("completed-projects");
+    gallery.replaceChildren();
+    for (const project of projects) {
+        const card = document.createElement("article");
+        card.className = "card completed-card";
+        card.dataset.hobby = project.hobby;
+        const title = document.createElement("h3");
+        title.textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+        const meta = document.createElement("p");
+        meta.className = "hint";
+        meta.textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} · Completed ${new Date(project.completedAt).toLocaleDateString()}`;
+        const view = document.createElement("button");
+        view.type = "button";
+        view.className = "project-link";
+        view.textContent = title.textContent;
+        view.onclick = () => openProjectDetails(project.id);
+        title.replaceChildren(view);
+        const description = document.createElement("p");
+        description.textContent = `${project.taskHistory.length} completed goals · View notes and photos`;
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "View project";
+        open.onclick = () => openProjectDetails(project.id);
+        const { header, editor } = projectControls(project, title);
+        card.append(header, meta, description, open, editor);
+        gallery.append(card);
+    }
+    $("completed-empty").hidden = projects.length > 0;
+}
+
+function projectControls(project, title) {
+    const header = document.createElement("div");
+    header.className = "project-card-header";
+    const menu = document.createElement("details");
+    menu.className = "project-menu";
+    const trigger = document.createElement("summary");
+    trigger.id = `project-actions-${project.id}`;
+    trigger.textContent = "⋯";
+    trigger.setAttribute("aria-label", `Actions for ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    const panel = document.createElement("div");
+    panel.className = "project-menu-panel";
+    const editor = renameControl(project, menu, trigger);
+    const rename = editor.firstElementChild;
+    const remove = deleteButton(project);
+    panel.append(rename, remove);
+    menu.append(trigger, panel);
+    menu.onkeydown = event => {
+        if (event.key === "Escape") {
+            event.preventDefault();
+            menu.open = false;
+            trigger.focus();
+        }
+    };
+    menu.onfocusout = event => {
+        if (!menu.contains(event.relatedTarget)) menu.open = false;
+    };
+    header.append(title, menu);
+    return { header, editor };
+}
+
+function renameControl(project, menu = null, trigger = null, onSaved = null) {
+    const container = document.createElement("div");
+    container.className = "project-rename";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.id = `${onSaved ? "detail-rename" : "rename"}-${project.id}`;
+    button.textContent = "Rename project";
+    button.setAttribute("aria-label", `Rename ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    const form = document.createElement("form");
+    form.hidden = true;
+    const label = document.createElement("label");
+    label.textContent = "Project name";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 120;
+    input.required = true;
+    label.append(input);
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "Save name";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "quiet";
+    cancel.textContent = "Cancel";
+    const close = () => {
+        form.hidden = true;
+        button.hidden = false;
+        if (menu) menu.open = false;
+        (trigger || button).focus();
+    };
+    cancel.onclick = close;
+    input.oninput = () => input.setCustomValidity("");
+    form.onkeydown = event => {
+        if (event.key === "Escape" && !save.disabled) { event.preventDefault(); close(); }
+    };
+    button.onclick = () => {
+        const current = state.sessions.find(item => item.id === project.id);
+        if (!current) return;
+        input.value = current.projectName || current.idea || `${names[current.hobby]} project`;
+        input.setCustomValidity("");
+        button.hidden = true;
+        if (menu) menu.open = false;
+        form.hidden = false;
+        input.focus();
+        input.select();
+    };
+    form.onsubmit = async event => {
+        event.preventDefault();
+        const name = input.value.trim();
+        if (!name || name.length > 120) {
+            input.setCustomValidity("Enter a project name between 1 and 120 characters.");
+            input.reportValidity();
+            return;
+        }
+        if (saving) { say("Wait for the current save to finish before renaming.", true); return; }
+        const current = state.sessions.find(item => item.id === project.id);
+        if (!current) return;
+        if (name === current.projectName) { close(); return; }
+        save.disabled = cancel.disabled = input.disabled = true;
+        try {
+            const result = await saveSession({ ...current, projectName: name, updated: Date.now() });
+            if (!result) return;
+            if (onSaved) await onSaved();
+            else home(current.completedAt ? "gallery" : "projects");
+            document.getElementById((trigger || button).id)?.focus();
+        } finally {
+            save.disabled = cancel.disabled = input.disabled = false;
+        }
+    };
+    actions.append(save, cancel);
+    form.append(label, actions);
+    container.append(button, form);
+    return container;
+}
+
+function deleteButton(project) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "danger quiet";
+    button.textContent = "Delete project";
+    button.setAttribute("aria-label", `Delete ${project.projectName || project.idea || names[project.hobby] + " project"}`);
+    button.onclick = () => deleteProject(project.id, button);
+    return button;
+}
+
+function photoPaths(project) {
+    return [...new Set([project.storage_path, ...(project.taskHistory || []).map(task => task.storage_path)].filter(Boolean))];
+}
+
+async function deleteProject(id, button) {
+    if (saving) { say("Wait for the current save to finish before deleting.", true); return; }
+    const project = state.sessions.find(item => item.id === id);
+    if (!project || !confirm(`Permanently delete “${project.projectName || project.idea || names[project.hobby] + " project"}”? All its goals, notes and photos will be removed. This cannot be undone.`)) return;
+    const epoch = generation;
+    const owner = user;
+    const previous = state;
+    const next = { ...state, sessions: state.sessions.filter(item => item.id !== id) };
+    if (!writeCache(next)) { say("Could not update browser storage. Project was not deleted. Reload and try again.", true); return; }
+    saving = true;
+    button.disabled = true;
+    let cleanupFailed = false;
+    try {
+        if (owner) {
+            // Read the latest paths before deleting, including photos added on another device.
+            const { data, error: readError } = await client.from("sessions").select("*").eq("id", id).eq("user_id", owner.id).maybeSingle();
+            if (readError) throw readError;
+            if (epoch !== generation) return;
+            const paths = [...new Set([...photoPaths(project), ...(data ? photoPaths(fromRow(data)) : [])])];
+            const { error } = await client.from("sessions").delete().eq("id", id).eq("user_id", owner.id);
+            if (error) throw error;
+            if (paths.length) {
+                try {
+                    const { error: storageError } = await client.storage.from(BUCKET).remove(paths);
+                    cleanupFailed = !!storageError;
+                } catch { cleanupFailed = true; }
+            }
+        }
+        if (epoch !== generation) return;
+        state = next;
+        if (!owner) guestCount = state.sessions.length;
+        detailId = null;
+        home(project.completedAt ? "gallery" : "projects");
+        accountUI();
+        say(cleanupFailed ? "Project deleted. Some private photo files could not be removed; storage cleanup is still needed." : "Project deleted.", cleanupFailed);
+    } catch (error) {
+        if (epoch === generation) {
+            writeCache(previous);
+            say(`Could not confirm deletion: ${error.message}. Refresh projects before retrying.`, true);
+        }
+    } finally { saving = false; button.disabled = false; }
+}
+
+function appendDetailText(container, heading, value) {
+    if (!value) return;
+    const title = document.createElement("h3");
+    title.textContent = heading;
+    const text = document.createElement("p");
+    text.className = "preserve";
+    text.textContent = value;
+    container.append(title, text);
+}
+
+async function appendDetailPhoto(container, record, epoch, id) {
+    if (!record.photo && !record.storage_path) return;
+    const image = document.createElement("img");
+    image.className = "history-photo";
+    image.alt = "Saved project progress";
+    image.loading = "lazy";
+    let url = record.photo;
+    try {
+        if (!url && user) {
+            const { data, error } = await client.storage.from(BUCKET).createSignedUrl(record.storage_path, 3600);
+            if (error) throw error;
+            url = data.signedUrl;
+        }
+        if (epoch !== generation || detailId !== id || !container.isConnected) return;
+        if (!url || !(url.startsWith("https://") || /^data:image\/(jpeg|png|webp);base64,/.test(url))) throw new Error("Photo unavailable");
+        image.src = url;
+        image.onerror = () => { image.replaceWith(document.createTextNode("Photo unavailable. Reopen the project to retry.")); };
+        container.append(image);
+    } catch {
+        if (epoch === generation && detailId === id && container.isConnected) {
+            const message = document.createElement("p");
+            message.className = "hint";
+            message.textContent = "Photo unavailable. Reopen the project when connected to retry.";
+            container.append(message);
+        }
+    }
+}
+
+async function openProjectDetails(id, refresh = true) {
+    const epoch = generation;
+    let project = state.sessions.find(item => item.id === id);
+    if (!project) return;
+    if (user && refresh && !project.pending) {
+        try {
+            const { data, error } = await client.from("sessions").select("*").eq("id", id).eq("user_id", user.id).single();
+            if (error) throw error;
+            if (epoch !== generation) return;
+            project = fromRow(data);
+            state.sessions = state.sessions.map(item => item.id === id ? project : item);
+            writeCache(state);
+        } catch (error) {
+            if (epoch !== generation) return;
+            say(`Could not refresh this project: ${error.message}. Showing the browser copy.`, true);
+        }
+    }
+    if (epoch !== generation) return;
+    detailId = id;
+    $("detail-title").textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+    $("detail-meta").textContent = `${names[project.hobby]} · ${formatTime(project.elapsedSeconds)} total · ${project.taskHistory.length} goals completed`;
+    $("detail-rename").replaceChildren(renameControl(project, null, null, () => openProjectDetails(id, false)));
+    const overview = $("detail-overview");
+    overview.replaceChildren();
+    appendDetailText(overview, "Original idea", project.idea);
+    appendDetailText(overview, "Materials", project.materials);
+    appendDetailText(overview, "Latest notes", project.note || "No notes saved.");
+    const history = $("detail-history");
+    history.replaceChildren();
+    $("history-help").textContent = "Notes and photos are saved with each goal when it is marked done. Older goals may only include the goal text.";
+    for (const task of project.taskHistory) {
+        const item = document.createElement("li");
+        item.className = "panel";
+        const title = document.createElement("h3");
+        title.className = "preserve";
+        title.textContent = task.goal;
+        const meta = document.createElement("p");
+        meta.className = "hint";
+        meta.textContent = `Completed ${new Date(task.completedAt).toLocaleDateString()}` +
+            (Number.isFinite(task.elapsedSeconds) ? ` · ${formatTime(task.elapsedSeconds)}` : "");
+        item.append(title, meta);
+        appendDetailText(item, "Notes", task.note);
+        history.append(item);
+        appendDetailPhoto(item, task, epoch, id);
+    }
+    if (!project.taskHistory.length) {
+        const item = document.createElement("li");
+        item.className = "panel";
+        appendDetailText(item, "Saved goal", project.goal);
+        history.append(item);
+    }
+    $("detail-delete").onclick = () => deleteProject(id, $("detail-delete"));
+    show("project-detail");
+    appendDetailPhoto(overview, project, epoch, id);
+}
+
+$("detail-back").onclick = () => { detailId = null; home("gallery"); };
+document.querySelectorAll("[data-sign-in]").forEach(button => {
+    button.onclick = event => {
+        event.stopPropagation();
+        document.querySelector(".account").open = true;
+        $("email").focus();
+    };
+});
+
+function clockTime(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const part = value => String(value).padStart(2, "0");
+    return (hours ? `${part(hours)}:` : "") + `${part(minutes)}:${part(total % 60)}`;
+}
+
+function taskSeconds(session) {
+    // Completed goals keep a project-time checkpoint inside the existing JSON history.
+    const checkpoint = session.taskHistory.at(-1)?.projectElapsedSeconds || 0;
+    return Math.max(0, (session.elapsedSeconds || 0) - checkpoint);
+}
+
+function updateTimerLabel() {
+    const session = state.sessions.find(item => item.id === activeId);
+    if (!session) return;
+    const elapsed = taskSeconds(session);
+    const remaining = session.minutes * 60 - elapsed;
+    $("timer").textContent = (remaining < 0 ? "+" : "") + clockTime(Math.abs(remaining));
+    $("timer").setAttribute("aria-label", remaining < 0 ? "Time beyond your planned duration" : "Time remaining");
+    $("timer-detail").textContent = `${clockTime(elapsed)} on this goal · ${formatTime(session.elapsedSeconds)} on this project`;
+    const total = Math.max(1, session.minutes * 60);
+    $("ring").style.strokeDashoffset = String(339.292 * Math.min(1, elapsed / total));
+    $("timer").closest(".timer-box").classList.toggle("over", remaining < 0);
+    const running = timerCheckpoint !== null;
+    $("toggle-timer").textContent = running ? "Pause timer" : "Resume timer";
+    const label = remaining <= 0
+        ? (running ? "Planned time reached. Continue at your own pace." : "Paused · planned time reached.")
+        : (running ? "Running" : "Paused");
+    if ($("timer-state").textContent !== label) $("timer-state").textContent = label;
+}
+
+function tickTimer(persist = false) {
+    if (!activeId || timerCheckpoint === null) return;
+    const now = Date.now();
+    const seconds = Math.max(0, Math.floor((now - timerCheckpoint) / 1000));
+    if (!seconds) return;
+    timerCheckpoint += seconds * 1000;
+    state.sessions = state.sessions.map(item => item.id === activeId
+        ? { ...item, elapsedSeconds: (item.elapsedSeconds || 0) + seconds, updated: now,
+            pending: !!user || item.pending }
+        : item);
+    timerWrites += seconds;
+    updateTimerLabel();
+    if (persist || timerWrites >= 15) {
+        writeCache(state);
+        timerWrites = 0;
+    }
+}
+
+function startTimer() {
+    const session = state.sessions.find(item => item.id === activeId);
+    if (!session || session.goalCompleted || session.completedAt || $("session").hidden || document.hidden) return;
+    if (timerCheckpoint !== null) return;
+    timerCheckpoint = Date.now();
+    timerWrites = 0;
+    timerInterval = setInterval(() => tickTimer(), 1000);
+    updateTimerLabel();
+}
+
+function stopTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = null;
+    tickTimer(true);
+    timerCheckpoint = null;
+    timerWrites = 0;
+    writeCache(state);
+    updateTimerLabel();
+    return state.sessions.find(item => item.id === activeId);
+}
+
+$("toggle-timer").onclick = () => {
+    resumeTimerOnVisible = false;
+    if (timerCheckpoint === null) startTimer();
+    else stopTimer();
+    accountUI();
+};
+
 function recommend(hobby, minutes, materials, idea) {
     const available = materials.toLowerCase();
-
     if (hobby === "reading") {
-        return (
-            `Read ${idea || "a book or article you already have"} ` +
-            `for about ${Math.max(1, minutes - 2)} minutes. ` +
-            "Use any remaining time to mark your place and note one thought."
-        );
+        return `Read ${idea || "a few pages of your current book or an article"} for ${minutes} minute${minutes === 1 ? "" : "s"}. Mark where you stop so you can return easily.`;
     }
-
     if (hobby === "journaling") {
-        const medium = /phone|tablet|laptop|digital/.test(available)
-        ? "your notes app"
-        : "paper or a notes app";
-
-        const scope = minutes <= 5
-        ? "A few words or one sentence is enough."
-        : `Write freely for ${Math.max(1, minutes - 2)} minutes, ` +
-        "then leave a sentence to return to.";
-
-        return (
-            `In ${medium}, write about ` +
-            `${idea || "one small moment from today"}. ${scope}`
-        );
+        const medium = /phone|tablet|laptop|digital|app/.test(available) ? "your journal or notes app" : "your journal";
+        return `In ${medium}, write about ${idea || "one moment from today"} for up to ${minutes} minute${minutes === 1 ? "" : "s"}. ${minutes <= 5 ? "A few words or a sentence is enough." : "Start with what happened and how you felt. Stop whenever you’re ready."}`;
     }
-
-    const subject = idea || "a simple penguin made from two ovals";
+    const subject = idea || "an everyday object, such as a cup";
     const digital = /tablet|ipad|digital|drawing app/.test(available);
-    const surface = /paper|sketchbook|notebook|pad/.test(available);
-    const tool = /pencil|pen|marker|crayon|charcoal|brush/.test(available);
-
-    if (available.trim() && !digital && !(surface && tool)) {
-        return (
-            `Plan ${subject} for ${minutes} minutes: ` +
-            "observe or imagine its largest shapes. " +
-            "If you have a drawing surface and a drawing tool, sketch them; " +
-            "otherwise make a mental composition to draw next time."
-        );
+    const hasSurface = /paper|sketchbook|notebook|pad|canvas/.test(available);
+    const hasTool = /pencil|pen|marker|crayon|charcoal|brush|watercolor|paint/.test(available);
+    if (available.trim() && !digital && !(hasSurface && hasTool)) {
+        return `Spend up to ${minutes} minutes planning a drawing of ${subject}. Observe the main shapes. Sketch them if you have a drawing tool and surface available.`;
     }
-
-    const medium = digital
-    ? "In your drawing app, "
-    : available.trim()
-    ? "With your available supplies, "
-    : "If you have pencil and paper, ";
-
-    let goal;
-
-    if (minutes < 10) {
-        goal = `sketch only the largest shapes of ${subject}.`;
-    } else if (minutes <= 25) {
-        goal =
-        `sketch the outline of ${subject}. ` +
-        "Start refining the line art if time allows.";
-    } else {
-        goal =
-        `sketch the outline of ${subject}. ` +
-        "Refine the lines and add a few details if time allows.";
-    }
-
-    return (
-        medium + goal +
-        " Leave color for another session; " +
-        "an unfinished sketch is a good stopping point."
-    );
+    const medium = digital ? "In your drawing app, sketch" : "Sketch";
+    return `${medium} ${subject} for up to ${minutes} minute${minutes === 1 ? "" : "s"}. ${minutes < 10 ? "Focus on the main shapes." : minutes <= 25 ? "Start with the outline, then add a few details if there’s time." : "Start with the outline, then refine the details or add shading."} An unfinished sketch is fine.`;
 }
 
 $("setup-form").onsubmit = event => {
@@ -356,7 +849,8 @@ $("plan-form").onsubmit = event => {
         hobby: $("hobby").value,
         minutes: Number($("minutes").value),
         materials: $("materials").value.trim(),
-        idea: $("idea").value.trim()
+        idea: $("idea").value.trim(),
+        projectName: $("project-name").value.trim()
     };
 
     $("goal").value = recommend(
@@ -367,9 +861,10 @@ $("plan-form").onsubmit = event => {
     );
 
     $("goal-context").textContent =
-    `${names[draft.hobby]} · ${draft.minutes} minutes` +
+    `${draft.projectName || names[draft.hobby]} · ${draft.minutes} minutes` +
     (draft.materials ? ` · ${draft.materials}` : "");
 
+    $("back").textContent = "Back to project details";
     say();
     show("goal-screen");
 };
@@ -384,12 +879,17 @@ $("goal-form").onsubmit = async event => {
         return;
     }
 
+    const startingNewProject = !draft.id;
     const session = {
         ...draft,
         goal,
         id: draft.id || (draft.id = crypto.randomUUID()),
-        note: "",
-        photo: "",
+        note: draft.note || "",
+        photo: draft.photo || "",
+        taskHistory: draft.taskHistory || [],
+        elapsedSeconds: draft.elapsedSeconds || 0,
+        goalCompleted: false,
+        completedAt: null,
         updated: Date.now()
     };
 
@@ -397,7 +897,14 @@ $("goal-form").onsubmit = async event => {
     button.disabled = true;
     try {
         const result = await saveSession(session);
-        if (result) await openSession(session.id, false);
+        if (result) {
+            if (startingNewProject) {
+                $("plan-form").reset(); syncChips();
+                updateHobbyExamples();
+            }
+            homeTab = "projects";
+            await openSession(session.id, false);
+        }
     } finally { button.disabled = false; }
 };
 
@@ -421,6 +928,14 @@ async function openSession(id, refresh = true) {
     }
     if (epoch !== generation) return;
     activeId = id;
+    if (session.goalCompleted) {
+        showCompletionChoice(session);
+        return;
+    }
+    $("session-title").textContent = session.projectName || session.idea || `${names[session.hobby]} project`;
+    $("session-hobby").textContent = names[session.hobby];
+    $("note").placeholder = hobbyCopy[session.hobby].note;
+    $("photo-controls").open = false;
     $("active-goal").textContent = session.goal;
     $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
         (session.materials ? ` · ${session.materials}` : "");
@@ -432,6 +947,9 @@ async function openSession(id, refresh = true) {
     $("preview").removeAttribute("src");
     $("remove-wrap").hidden = !(session.photo || session.storage_path);
     show("session");
+    resumeTimerOnVisible = document.hidden;
+    updateTimerLabel();
+    startTimer();
     let url = session.photo;
     if (!url && session.storage_path && owner) {
         try {
@@ -472,42 +990,123 @@ function readPhoto(file) {
     });
 }
 
+function showCompletionChoice(project) {
+    $("done-project-title").textContent = project.projectName || project.idea || `${names[project.hobby]} project`;
+    $("done-task").textContent = project.goal;
+    $("done-project-time").textContent = `${formatTime(project.elapsedSeconds)} tracked across this project.`;
+    show("goal-done");
+}
+
+function setSessionBusy(busy) {
+    for (const id of ["save-progress", "complete-task", "leave", "toggle-timer"]) {
+        $(id).disabled = busy;
+    }
+}
+
 $("progress-form").onsubmit = async event => {
     event.preventDefault();
 
     const epoch = generation;
     const button = $("save-progress");
-    button.disabled = true;
-    $("leave").disabled = true;
+    setSessionBusy(true);
     button.textContent = "Saving…";
 
     try {
         const session = state.sessions.find(item => item.id === activeId);
-        let photo = $("remove-photo").checked ? "" : session.photo;
-        const file = $("photo").files[0];
-
-        if (file && !$("remove-photo").checked) {
-            photo = await readPhoto(file);
-        }
+        const captured = await captureProgress(session);
         if (epoch !== generation) return;
-
-        const updated = {
-            ...session,
-            note: $("note").value.trim(),
-            photo,
-            storage_path: $("remove-photo").checked ? null : session.storage_path,
-            updated: Date.now()
-        };
-
+        const wasRunning = timerCheckpoint !== null;
+        const timed = stopTimer();
+        const updated = { ...timed, ...captured, updated: Date.now() };
         const result = await saveSession(updated);
         if (result) home();
+        else if (wasRunning) startTimer();
     } catch (error) {
         say(error.message, true);
     } finally {
-        button.disabled = false;
-        $("leave").disabled = false;
-        button.textContent = "Save progress & return home";
+        setSessionBusy(false);
+        button.textContent = "Save & close";
     }
+};
+
+async function captureProgress(session) {
+    let photo = $("remove-photo").checked ? "" : session.photo;
+    const file = $("photo").files[0];
+    if (file && !$("remove-photo").checked) photo = await readPhoto(file);
+    return {
+        note: $("note").value.trim(),
+        photo,
+        storage_path: $("remove-photo").checked ? null : session.storage_path
+    };
+}
+
+$("complete-task").onclick = async () => {
+    setSessionBusy(true);
+    try {
+        const epoch = generation;
+        const session = state.sessions.find(item => item.id === activeId);
+        const captured = await captureProgress(session);
+        if (epoch !== generation) return;
+        const wasRunning = timerCheckpoint !== null;
+        const timed = stopTimer();
+        const updated = {
+            ...timed,
+            ...captured,
+            taskHistory: [...timed.taskHistory, { goal: timed.goal, completedAt: new Date().toISOString(),
+                note: captured.note, photo: captured.photo, storage_path: captured.storage_path || null,
+                projectElapsedSeconds: timed.elapsedSeconds, elapsedSeconds: taskSeconds(timed) }],
+            goalCompleted: true,
+            updated: Date.now()
+        };
+        const result = await saveSession(updated);
+        if (!result) { if (wasRunning) startTimer(); return; }
+        showCompletionChoice(updated);
+    } catch (error) {
+        say(error.message, true);
+    } finally { setSessionBusy(false); }
+};
+
+$("done-home").onclick = () => { home("projects"); say(); };
+
+$("continue-project").onclick = () => {
+    const project = state.sessions.find(item => item.id === activeId);
+    // Older completed goals predate timer checkpoints; seed one when continuing.
+    const taskHistory = project.taskHistory.map((task, index, tasks) =>
+        index === tasks.length - 1 && task.projectElapsedSeconds === undefined
+            ? { ...task, projectElapsedSeconds: project.elapsedSeconds } : task);
+    draft = {
+        id: project.id,
+        hobby: project.hobby,
+        minutes: project.minutes,
+        materials: project.materials,
+        idea: project.idea,
+        projectName: project.projectName,
+        note: project.note,
+        photo: project.photo,
+        storage_path: project.storage_path,
+        taskHistory,
+        elapsedSeconds: project.elapsedSeconds
+    };
+    $("goal").value = recommend(draft.hobby, draft.minutes, draft.materials, draft.idea);
+    $("goal-context").textContent = `${draft.projectName || draft.idea || names[draft.hobby]} · Next goal`;
+    $("back").textContent = "Back to projects";
+    say();
+    show("goal-screen");
+};
+
+$("finish-project").onclick = async () => {
+    const button = $("finish-project");
+    button.disabled = true;
+    try {
+        const project = state.sessions.find(item => item.id === activeId);
+        const completed = { ...project, goalCompleted: true, completedAt: new Date().toISOString(), updated: Date.now() };
+        const result = await saveSession(completed);
+        if (result) {
+            activeId = null;
+            home("gallery");
+            say("Project completed and moved to Finished.");
+        }
+    } finally { button.disabled = false; }
 };
 
 function hasUnsavedProgress() {
@@ -534,8 +1133,13 @@ $("leave").onclick = () => {
         return;
     }
 
-    home();
-    say();
+    const wasRunning = timerCheckpoint !== null;
+    const updated = stopTimer();
+    setSessionBusy(true);
+    saveSession(updated).then(result => {
+        if (result) { home(); say(); }
+        else if (wasRunning) startTimer();
+    }).finally(() => setSessionBusy(false));
 };
 
 window.addEventListener("beforeunload", event => {
@@ -543,6 +1147,20 @@ window.addEventListener("beforeunload", event => {
         event.preventDefault();
         event.returnValue = "";
     }
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        resumeTimerOnVisible = timerCheckpoint !== null;
+        if (resumeTimerOnVisible) stopTimer();
+    } else if (resumeTimerOnVisible) {
+        resumeTimerOnVisible = false;
+        startTimer();
+    }
+});
+
+window.addEventListener("pagehide", () => {
+    if (timerCheckpoint !== null) stopTimer();
 });
 
 // Avoid overwriting another tab's fallback changes. Cloud remains authoritative.
@@ -621,6 +1239,7 @@ $("import-local").onclick = async () => {
 
 async function changeAccount(nextUser) {
     if ((user?.id || null) === (nextUser?.id || null)) return;
+    if (timerCheckpoint !== null) stopTimer();
     // Preserve the current account's edited notes before an auth change resets the UI.
     if (hasUnsavedProgress()) {
         const session = state.sessions.find(s => s.id === activeId);
@@ -630,8 +1249,14 @@ async function changeAccount(nextUser) {
         say("Account changed. Notes were kept in the previous browser fallback where possible. Reselect any unsaved photo after signing in again.", true);
     }
     generation++;
+    homeTab = "projects";
+    resumeTimerOnVisible = false;
     user = nextUser;
     activeId = null;
+    detailId = null;
+    $("detail-history").replaceChildren();
+    $("detail-overview").replaceChildren();
+    $("detail-title").textContent = "Project details";
     draft = null;
     cloudReady = false;
     blocked = false;
@@ -650,7 +1275,7 @@ async function changeAccount(nextUser) {
 async function initializeCloud() {
     const config = window.SUPABASE_CONFIG || {};
     if (!config.url || !config.anonKey) {
-        say("Cloud sync is not configured yet. You can still save your progress on this browser.");
+        say("Account sign-in is not available yet. You can still save projects on this browser.");
         return;
     }
     try {
