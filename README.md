@@ -55,9 +55,13 @@ JavaScript syntax (`node --check script.js`) and patch whitespace checks passed.
 
 ## Task timer
 
+The project form labels the editable duration as **Set your timer**, with guidance for any whole number from 1–180 minutes. The 10/20/30/45-minute quick choices remain available below it.
+
 Opening an unfinished goal starts a countdown using its planned minutes. Pause/Resume controls exclude breaks. The timer pauses while the tab is hidden and resumes on return only if it was running. At zero it counts overtime; completion is always your choice. Saving or completing a goal stops the timer and persists the project total through the existing save flow. Completed goals keep time checkpoints in `task_history`, so the next goal gets a fresh countdown without resetting the project's total. No additional database columns are needed. For older goals without a checkpoint, existing tracked time is treated as time on the current goal until it is completed.
 
 ## Project detail history
+
+The work screen shows a progress-photo drop area for every hobby. Choose a file, drop one photo, or use **Take a photo** for mobile camera capture where supported. The new selection previews immediately and can be cleared before saving. JPEG, PNG and WebP photos above 5 MB (up to 25 MB) are resized locally to JPEG to fit the existing storage limit. Save still attaches the photo through the existing guest/cloud flow. JavaScript harness checks cover selection, validation, preview/clear/removal, mocked resizing, and stale selections; real mobile camera capture and browser layout have not been verified in this environment.
 
 Each newly completed goal snapshots its notes, photo, and tracked time in the existing `task_history` JSON field. Cloud history stores private storage paths, not image data URLs, and the detail screen uses temporary signed URLs. Photos referenced by completed goals are retained when the current photo changes. Old records only display history that was actually saved; overwritten notes and photos cannot be recovered. No new SQL migration is required for these snapshots.
 

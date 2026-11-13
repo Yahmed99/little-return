@@ -56,9 +56,9 @@ create policy "Delete own sessions" on public.sessions for delete to authenticat
   using ((select auth.uid()) = user_id);
 
 insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
-values ('progress-photos', 'progress-photos', false, 1048576,
+values ('progress-photos', 'progress-photos', false, 5242880,
         array['image/jpeg', 'image/png', 'image/webp'])
-on conflict (id) do update set public = false, file_size_limit = 1048576,
+on conflict (id) do update set public = false, file_size_limit = 5242880,
   allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp'];
 
 -- Paths are <auth-user-id>/<session-id>/<random-file-name>.
