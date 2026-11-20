@@ -242,3 +242,9 @@ button.danger { text-decoration: underline; text-underline-offset: .2em; }
   .sketch-hero { gap: .5rem; padding-block: .75rem; }
   .sketch-hero img { max-width: 240px; }
 }
+
+
+.goal-personalization { margin-block: 1.25rem; padding-block: 1rem; border-block: 1px solid var(--line); }
+.goal-personalization h2 { margin: 0 0 .5rem; }
+#personalization-status:empty { margin: 0; }
+#personalization-preview { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--control-r); overflow-wrap: anywhere; }

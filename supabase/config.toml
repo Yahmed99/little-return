@@ -1,0 +1,5 @@
+project_id = "little-return"
+
+[functions.personalize-goal]
+# The function verifies user access tokens through Supabase Auth.
+verify_jwt = false

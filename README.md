@@ -66,3 +66,45 @@ The work screen shows a progress-photo drop area for every hobby. Choose a file,
 Each newly completed goal snapshots its notes, photo, and tracked time in the existing `task_history` JSON field. Cloud history stores private storage paths, not image data URLs, and the detail screen uses temporary signed URLs. Photos referenced by completed goals are retained when the current photo changes. Old records only display history that was actually saved; overwritten notes and photos cannot be recovered. No new SQL migration is required for these snapshots.
 
 Validation: Firefox localhost checks passed for gallery navigation, historical comments/photos, guest and active-project deletion, canceling deletion, visible sign-in controls, and mobile sizing. Cloud deletion errors, retries and photo cleanup were tested with a mocked API; live Supabase authorization still requires the two-account checks above.
+
+## Optional OpenAI goal personalization
+
+The existing local goal is available immediately to everyone. Signed-in users can select **Personalize this suggestion** on either goal-planning screen, review the result, and choose whether to use it. The browser sends hobby, duration, idea, and supplies. For a continuing project it also sends the project name, goal draft, total tracked time, completed goal count, and up to eight recent goals with their notes and tracked time. The editable next-step hint starts with Notes for next time. A matching history note is omitted so editing or clearing the hint controls whether the latest note is sent. Photos, storage paths, and account identifiers stay out of the OpenAI request. The goal is saved through the existing form only when the user starts the goal.
+
+### Deploy the function
+
+1. Confirm the Supabase project in `supabase-config.js`. Apply [the quota migration](supabase/migrations/20261120000100_goal_api_quota.sql) in that project's SQL Editor or through its migration workflow. The RPC is executable by the server role only. The migration is separate from `supabase-setup.sql`.
+2. In an OpenAI API project with billing and access to [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), create a project API key. Add it to **Supabase → Edge Functions → Secrets** as `OPENAI_API_KEY`. Keep it out of GitHub Pages, published JavaScript, and the repository.
+3. From the repository root, sign in with the Supabase CLI and deploy to the verified project ref.
+
+   ```sh
+   supabase login
+   supabase functions deploy personalize-goal --project-ref YOUR_PROJECT_REF
+   ```
+
+   The deployment reads [the function config](supabase/config.toml). It disables the gateway's legacy JWT check because the function validates the caller's access token through Supabase Auth on every POST. The function uses Supabase's built-in `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` secrets. The service-role key stays on the server and is used only for the quota RPC. See [Supabase authentication](https://supabase.com/docs/guides/functions/auth) and [secret management](https://supabase.com/docs/guides/functions/secrets).
+4. The production browser origin is `https://yahmed99.github.io`. To test a local frontend against a test project, set the function's optional `GOAL_DEV_ORIGINS` secret to a comma-separated list of exact origins, such as `http://localhost:8000,http://127.0.0.1:8000`. Check the actual publishing source in GitHub **Settings → Pages**, then publish the frontend as static files.
+5. In a test project, confirm that guests can start a local goal, an unauthorized POST returns `401`, a signed-in request previews a suggestion, and two simultaneous requests from one account admit at most one. Test another account independently and verify the authenticated database role cannot invoke the quota RPC. Run the guest and cloud checks above against the deployed project before release.
+
+The function allows **10 attempts per account per UTC day**, **one attempt per 10 seconds**, and **1,000 attempts per project per UTC day**, enforced in Postgres before contacting OpenAI. Provider failures, timeouts, and requests canceled after dispatch can consume an attempt. Monitor provider and Supabase usage and review the current [model pricing](https://developers.openai.com/api/docs/models/gpt-6-luna). The function sets `store: false` to disable later Responses API retrieval. Review applicable retention and terms before release. [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data) · [OpenAI Services Agreement](https://openai.com/policies/services-agreement/)
+
+### Test locally
+
+Run `node --test tests/*.test.mjs` on Node 22.18 or newer for mocked provider, authentication, quota, request validation, and response parsing checks. To test the real function locally, run `supabase start`, apply the project SQL to the local database, and run `supabase functions serve personalize-goal --env-file /path/outside/the/repository/edge-secrets.env`. Set that file's `OPENAI_API_KEY` and `GOAL_DEV_ORIGINS` for the localhost origin. Point a local copy of `supabase-config.js` at the local Supabase URL and publishable or anon key. The real request uses paid API access. The local goal remains usable if the function is absent or unavailable.
+
+### Test a local frontend against the hosted function
+
+In the Supabase project used by `supabase-config.js`, confirm **Edge Functions** lists a deployed function named exactly `personalize-goal`. Adding `OPENAI_API_KEY` under Secrets does not deploy the code. If the function is missing, run the deployment command above.
+
+Set `GOAL_DEV_ORIGINS` to the exact origin in your browser's address bar. For VS Code Live Server at `http://127.0.0.1:5500`, use that value without a trailing slash. For magic-link sign-in, also add your local page URL to **Authentication → URL Configuration → Redirect URLs**.
+
+Check the preflight without sending a key or session token:
+
+```sh
+curl -i -X OPTIONS 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/personalize-goal' \
+  -H 'Origin: http://127.0.0.1:5500' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: apikey,authorization,content-type'
+```
+
+Expect `204` and `Access-Control-Allow-Origin: http://127.0.0.1:5500`. A Supabase gateway `404 NOT_FOUND` means the function is missing at that project and name. A `403` from this function with `code: "origin"` means the browser origin is absent from its allowlist.

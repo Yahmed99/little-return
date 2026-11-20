@@ -71,6 +71,7 @@ document.addEventListener("click", e => {
 
 let state = { hobbies: [], sessions: [] };
 let draft;
+let personalizationRequest = null;
 let activeId;
 let detailId = null;
 let openRequest = 0;
@@ -182,6 +183,9 @@ async function removeUnreferencedPhotos(photos) {
 }
 
 function accountUI() {
+    $("personalization-guest").hidden = !!user;
+    $("personalization-account").hidden = !user;
+    $("personalization-guest").querySelector("button").disabled = !client;
     $("account-label").textContent = user
         ? (pending().length ? "Unsynced changes" : cloudReady ? "Saved to account" : "Offline")
         : "Sign in";
@@ -417,6 +421,11 @@ function say(message = "", error = false) {
 for (const id of ["status", "error"]) $(id).onclick = () => say();
 
 function show(id) {
+    resetPersonalization();
+    if (id === "goal-screen") {
+        $("personalization-hint-wrap").hidden = !draft.nextGoal;
+        $("personalization-hint").value = draft.nextGoal ? (draft.note || "").slice(0, 2000) : "";
+    }
     for (const view of ["setup", "home", "goal-screen", "session", "goal-done", "project-detail"]) {
         $(view).hidden = view !== id;
     }
@@ -1084,13 +1093,144 @@ $("cancel-setup").onclick = () => {
     home();
 };
 
+function resetPersonalization(status = "") {
+    const request = personalizationRequest;
+    personalizationRequest = null;
+    request?.abort();
+    $("personalize-goal").disabled = false;
+    $("cancel-personalization").hidden = true;
+    $("personalization-preview").hidden = true;
+    $("personalization-text").textContent = "";
+    $("personalization-status").textContent = status;
+}
+
+$("cancel-personalization").onclick = () => {
+    resetPersonalization("Request canceled. Your goal is ready to edit.");
+    $("personalize-goal").focus();
+};
+$("keep-local-goal").onclick = () => {
+    resetPersonalization("Kept your goal.");
+    $("goal").focus();
+};
+$("use-personalization").onclick = () => {
+    if ($("personalization-preview").hidden) return;
+    $("goal").value = $("personalization-text").textContent;
+    checkpointGoal();
+    resetPersonalization("Suggestion applied. You can edit it before starting.");
+    $("goal").focus();
+};
+
+$("personalize-goal").onclick = async () => {
+    if (!client || !user || !draft || personalizationRequest || $("goal-screen").hidden ||
+        $("goal-form").querySelector('[type="submit"]').disabled) return;
+    if (draft.nextGoal && !$("next-goal-minutes").reportValidity()) return;
+    const owner = user.id;
+    const input = {
+        hobby: draft.hobby,
+        minutes: draft.nextGoal ? $("next-goal-minutes").valueAsNumber : draft.minutes,
+        idea: draft.idea || "",
+        materials: draft.materials || ""
+    };
+    if (draft.nextGoal) {
+        const hint = $("personalization-hint").value.trim();
+        if (hint) input.hint = hint;
+        const latestNote = (draft.note || "").trim();
+        const recentGoals = draft.taskHistory.slice(-8).map(task => {
+            const note = (task.note || "").trim();
+            return {
+                goal: task.goal.slice(0, 1200),
+                note: note === latestNote ? "" : note.slice(0, 2000),
+                elapsedSeconds: Number.isSafeInteger(task.elapsedSeconds) ? task.elapsedSeconds : 0
+            };
+        });
+        input.project = {
+            name: draft.projectName || "",
+            goalDraft: $("goal").value.trim(),
+            elapsedSeconds: draft.elapsedSeconds || 0,
+            completedGoalCount: draft.taskHistory.length,
+            recentGoals
+        };
+    }
+
+    resetPersonalization("Preparing a personalized suggestion…");
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(16000)]);
+    personalizationRequest = controller;
+    signal.addEventListener("abort", () => {
+        if (personalizationRequest === controller) {
+            resetPersonalization("Personalization timed out. Try again or continue with your goal.");
+        }
+    }, { once: true });
+    $("personalize-goal").disabled = true;
+    $("cancel-personalization").hidden = false;
+    try {
+        const { data, error } = await client.auth.getSession();
+        if (personalizationRequest !== controller) return;
+        if (signal.aborted) throw signal.reason;
+        if (error || data.session?.user.id !== owner) {
+            $("personalization-status").textContent = "Sign in again to personalize your goal.";
+            return;
+        }
+        const { url, anonKey } = window.SUPABASE_CONFIG;
+        const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/personalize-goal`, {
+            method: "POST",
+            headers: {
+                apikey: anonKey,
+                Authorization: `Bearer ${data.session.access_token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(input),
+            signal
+        });
+        const result = await response.json();
+        if (personalizationRequest !== controller) return;
+        const goal = typeof result?.goal === "string" ? result.goal.trim() : "";
+        if (response.ok && goal && goal.length <= 1200) {
+            $("personalization-text").textContent = goal;
+            $("personalization-preview").hidden = false;
+            $("personalization-status").textContent = "A suggestion is ready to preview.";
+        } else if (response.status === 429 && Number.isSafeInteger(result?.retryAfter) && result.retryAfter > 0) {
+            const wait = result.retryAfter < 60 ? `${result.retryAfter} seconds` : `${Math.ceil(result.retryAfter / 60)} minutes`;
+            $("personalization-status").textContent = `Personalization limit reached. Try again in about ${wait}.`;
+        } else if (response.status === 401) {
+            $("personalization-status").textContent = "Sign in again to personalize your goal.";
+        } else {
+            $("personalization-status").textContent = "Personalization is unavailable. You can still use or edit your goal.";
+        }
+    } catch {
+        if (personalizationRequest !== controller) return;
+        $("personalization-status").textContent = signal.aborted
+            ? "Personalization timed out. Try again or continue with your goal."
+            : "Personalization is unavailable. You can still use or edit your goal.";
+    } finally {
+        if (personalizationRequest === controller) {
+            personalizationRequest = null;
+            $("personalize-goal").disabled = false;
+            $("cancel-personalization").hidden = true;
+        }
+    }
+};
+
+function invalidatePersonalization() {
+    if (personalizationRequest || !$("personalization-preview").hidden) {
+        resetPersonalization("Planning details changed. Request a new suggestion when ready.");
+    }
+}
+
+$("next-goal-minutes").addEventListener("input", invalidatePersonalization);
+$("personalization-hint").addEventListener("input", () => {
+    invalidatePersonalization();
+    checkpointGoal();
+});
+
 function checkpointGoal() {
     if (draft && !$("goal-screen").hidden) {
         writeDraft(draftKey(), {
             project: draft,
             goal: $("goal").value,
             context: $("goal-context").textContent,
-            minutes: draft.nextGoal ? $("next-goal-minutes").value : undefined
+            minutes: draft.nextGoal ? $("next-goal-minutes").value : undefined,
+            hint: draft.nextGoal ? $("personalization-hint").value : undefined
         });
     }
 }
@@ -1111,6 +1251,7 @@ function restoreGoalDraft(saved) {
     $("back").textContent = draft.nextGoal ? "Back to projects" : "Back to project setup";
     showNextGoalTimer(saved.minutes ?? draft.minutes);
     show("goal-screen");
+    if (draft.nextGoal && typeof saved.hint === "string") $("personalization-hint").value = saved.hint;
 }
 
 $("resume-goal-draft").onclick = () => {
@@ -1194,6 +1335,7 @@ $("goal-form").onsubmit = async event => {
     };
 
     const button = $("goal-form").querySelector('[type="submit"]');
+    resetPersonalization();
     button.disabled = true;
     $("goal").disabled = true;
     minutesField.disabled = true;
@@ -1754,6 +1896,7 @@ async function changeAccount(nextUser) {
     checkpointProgress();
     checkpointGoal();
     generation++;
+    resetPersonalization();
     homeTab = "projects";
     resumeTimerOnVisible = false;
     user = nextUser;

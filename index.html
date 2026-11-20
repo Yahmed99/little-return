@@ -162,6 +162,33 @@
           <input id="next-goal-minutes" type="number" inputmode="numeric" min="1" max="180" step="1" aria-describedby="next-goal-minutes-help" required disabled>
         </div>
         <p class="hint">Edit this suggestion to make it work for you. The timer starts when you select Start goal &amp; timer.</p>
+        <section class="goal-personalization" aria-labelledby="personalization-title">
+          <h2 id="personalization-title">Personalize your goal</h2>
+          <p id="personalization-privacy" class="hint">Personalizing sends your hobby, time, idea, and supplies to OpenAI. For an existing project it also sends the project name, goal draft, tracked time, recent completed goals and their notes, and the next-step hint shown here.</p>
+          <div id="personalization-guest">
+            <button type="button" class="secondary" data-sign-in>Sign in to personalize</button>
+          </div>
+          <div id="personalization-account" hidden>
+            <div id="personalization-hint-wrap" hidden>
+              <label for="personalization-hint">Next-step hint <span>(optional)</span></label>
+              <textarea id="personalization-hint" rows="3" maxlength="2000" aria-describedby="personalization-hint-help"></textarea>
+              <p id="personalization-hint-help" class="hint">Prefilled from Notes for next time. You can edit or clear it before sending.</p>
+            </div>
+            <div class="actions">
+              <button id="personalize-goal" type="button" class="secondary" aria-describedby="personalization-privacy">Personalize this suggestion</button>
+              <button id="cancel-personalization" type="button" class="quiet" hidden>Cancel request</button>
+            </div>
+          </div>
+          <p id="personalization-status" class="hint" role="status"></p>
+          <div id="personalization-preview" hidden>
+            <h3>Suggested goal</h3>
+            <p id="personalization-text" class="preserve"></p>
+            <div class="actions">
+              <button id="use-personalization" type="button" class="secondary">Use this suggestion</button>
+              <button id="keep-local-goal" type="button" class="quiet">Keep my goal</button>
+            </div>
+          </div>
+        </section>
         <div class="actions"><button type="submit">Start goal &amp; timer</button>
         <button id="back" type="button" class="secondary">Back to project setup</button></div>
       </form>
