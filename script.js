@@ -423,8 +423,11 @@ for (const id of ["status", "error"]) $(id).onclick = () => say();
 function show(id) {
     resetPersonalization();
     if (id === "goal-screen") {
+        $("personalization-options").open = false;
+        $("personalization-options-label").textContent = draft.nextGoal ? "Edit hint or see what’s shared" : "What’s shared";
+        $("personalization-project-privacy").hidden = !draft.nextGoal;
         $("personalization-hint-wrap").hidden = !draft.nextGoal;
-        $("personalization-hint").value = "";
+        $("personalization-hint").value = draft.nextGoal ? (draft.note || "").slice(0, 2000) : "";
     }
     for (const view of ["setup", "home", "goal-screen", "session", "goal-done", "project-detail"]) {
         $(view).hidden = view !== id;
@@ -989,14 +992,7 @@ function tickTimer(persist = false) {
         : item);
     timerWrites += seconds;
     updateTimerLabel();
-    if (writeCache(state)) timerW      say("This project's timer is already running in another tab.", true);
-            return;
-        }
-        begin();
-        return new Promise(resolve => { releaseTimerLock = resolve; });
-    }).catch(() => {
-        if (timerLockRequest === request) say("Could not start the timer. Try again.", true);
-    }).finally(() => {rites = 0;
+    if (writeCache(state)) timerWrites = 0;
     else if (!persist) say("Tracked time could not be saved to this browser. Keep this page open and use Save & close to retry.", true);
 }
 
@@ -1017,7 +1013,14 @@ function startTimer() {
     navigator.locks.request(`${cacheKey()}:timer:${activeId}`, { ifAvailable: true }, lock => {
         if (timerLockRequest !== request || document.hidden || $("session").hidden || blocked) return;
         if (!lock) {
-      
+            say("This project's timer is already running in another tab.", true);
+            return;
+        }
+        begin();
+        return new Promise(resolve => { releaseTimerLock = resolve; });
+    }).catch(() => {
+        if (timerLockRequest === request) say("Could not start the timer. Try again.", true);
+    }).finally(() => {
         if (timerLockRequest === request) timerLockRequest = null;
     });
 }
@@ -1131,13 +1134,36 @@ $("personalize-goal").onclick = async () => {
         idea: draft.idea || "",
         materials: draft.materials || ""
     };
-    const hint = draft.nextGoal ? $("personalization-hint").value.trim() : "";
-    if (hint) input.hint = hint;
+    if (draft.nextGoal) {
+        const hint = $("personalization-hint").value.trim();
+        if (hint) input.hint = hint;
+        const latestNote = (draft.note || "").trim();
+        const recentGoals = draft.taskHistory.slice(-8).map(task => {
+            const note = (task.note || "").trim();
+            return {
+                goal: task.goal.slice(0, 1200),
+                note: note === latestNote ? "" : note.slice(0, 2000),
+                elapsedSeconds: Number.isSafeInteger(task.elapsedSeconds) ? task.elapsedSeconds : 0
+            };
+        });
+        input.project = {
+            name: draft.projectName || "",
+            goalDraft: $("goal").value.trim(),
+            elapsedSeconds: draft.elapsedSeconds || 0,
+            completedGoalCount: draft.taskHistory.length,
+            recentGoals
+        };
+    }
 
     resetPersonalization("Preparing a personalized suggestion…");
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(16000)]);
     personalizationRequest = controller;
+    signal.addEventListener("abort", () => {
+        if (personalizationRequest === controller) {
+            resetPersonalization("Personalization timed out. Try again or continue with your goal.");
+        }
+    }, { once: true });
     $("personalize-goal").disabled = true;
     $("cancel-personalization").hidden = false;
     try {
@@ -1195,7 +1221,10 @@ function invalidatePersonalization() {
 }
 
 $("next-goal-minutes").addEventListener("input", invalidatePersonalization);
-$("personalization-hint").addEventListener("input", invalidatePersonalization);
+$("personalization-hint").addEventListener("input", () => {
+    invalidatePersonalization();
+    checkpointGoal();
+});
 
 function checkpointGoal() {
     if (draft && !$("goal-screen").hidden) {
@@ -1203,7 +1232,8 @@ function checkpointGoal() {
             project: draft,
             goal: $("goal").value,
             context: $("goal-context").textContent,
-            minutes: draft.nextGoal ? $("next-goal-minutes").value : undefined
+            minutes: draft.nextGoal ? $("next-goal-minutes").value : undefined,
+            hint: draft.nextGoal ? $("personalization-hint").value : undefined
         });
     }
 }
@@ -1224,6 +1254,7 @@ function restoreGoalDraft(saved) {
     $("back").textContent = draft.nextGoal ? "Back to projects" : "Back to project setup";
     showNextGoalTimer(saved.minutes ?? draft.minutes);
     show("goal-screen");
+    if (draft.nextGoal && typeof saved.hint === "string") $("personalization-hint").value = saved.hint;
 }
 
 $("resume-goal-draft").onclick = () => {

@@ -150,47 +150,48 @@
     </section>
 
     <section id="goal-screen" hidden aria-labelledby="goal-title">
-      <p class="step">Plan your goal</p>
-      <h1 id="goal-title" tabindex="-1">Choose a goal for today</h1>
+      <h1 id="goal-title" tabindex="-1">Choose a goal</h1>
       <form id="goal-form" class="panel">
         <p id="goal-context" class="context"></p>
-        <label for="goal">Your goal</label>
-        <textarea id="goal" rows="5" maxlength="1200" required></textarea>
-        <div id="next-goal-timer" class="custom-time" hidden>
-          <label for="next-goal-minutes">Timer for this goal <span>(minutes)</span></label>
-          <p id="next-goal-minutes-help" class="hint">Choose any whole number from 1 to 180 minutes.</p>
+        <label for="goal">Your goal <span>· Edit the suggestion below</span></label>
+        <textarea id="goal" rows="4" maxlength="1200" required></textarea>
+        <div id="next-goal-timer" class="goal-duration" hidden>
+          <label for="next-goal-minutes">Timer <span>(minutes)</span></label>
           <input id="next-goal-minutes" type="number" inputmode="numeric" min="1" max="180" step="1" aria-describedby="next-goal-minutes-help" required disabled>
+          <span id="next-goal-minutes-help" class="hint">1–180 min</span>
         </div>
-        <p class="hint">Edit this suggestion to make it work for you. The timer starts when you select Start goal &amp; timer.</p>
-        <section class="goal-personalization" aria-labelledby="personalization-title">
-          <h2 id="personalization-title">Personalize your goal</h2>
-          <p id="personalization-privacy" class="hint">Personalizing sends your hobby, time, idea, and supplies to OpenAI. For an existing project it also sends the project name, goal draft, tracked time, recent completed goals and their notes, and the next-step hint shown here.</p>
+        <div class="goal-personalization">
           <div id="personalization-guest">
-            <button type="button" class="secondary" data-sign-in>Sign in to personalize</button>
+            <button type="button" class="quiet" data-sign-in>Sign in for AI suggestions</button>
           </div>
           <div id="personalization-account" hidden>
-            <div id="personalization-hint-wrap" hidden>
-              <label for="personalization-hint">Next-step hint <span>(optional)</span></label>
-              <textarea id="personalization-hint" rows="3" maxlength="2000" aria-describedby="personalization-hint-help"></textarea>
-              <p id="personalization-hint-help" class="hint">Prefilled from Notes for next time. You can edit or clear it before sending.</p>
+            <div class="goal-suggestion-actions">
+              <button id="personalize-goal" type="button" class="secondary" aria-describedby="personalization-privacy">Suggest with OpenAI</button>
+              <button id="cancel-personalization" type="button" class="quiet" hidden>Cancel</button>
             </div>
-            <div class="actions">
-              <button id="personalize-goal" type="button" class="secondary" aria-describedby="personalization-privacy">Personalize this suggestion</button>
-              <button id="cancel-personalization" type="button" class="quiet" hidden>Cancel request</button>
-            </div>
+            <details id="personalization-options">
+              <summary id="personalization-options-label">What’s shared</summary>
+              <p id="personalization-privacy" class="hint">Sends your hobby, timer, idea, and supplies to OpenAI.<span id="personalization-project-privacy" hidden> For this project it also sends the name, goal draft, tracked time, recent goals and notes, and the hint below.</span></p>
+              <div id="personalization-hint-wrap" hidden>
+                <label for="personalization-hint">Next-step hint <span>(optional)</span></label>
+                <textarea id="personalization-hint" rows="3" maxlength="2000" aria-describedby="personalization-hint-help"></textarea>
+                <p id="personalization-hint-help" class="hint">Prefilled from Notes for next time. Edit or clear it before sending.</p>
+              </div>
+            </details>
           </div>
           <p id="personalization-status" class="hint" role="status"></p>
           <div id="personalization-preview" hidden>
-            <h3>Suggested goal</h3>
             <p id="personalization-text" class="preserve"></p>
-            <div class="actions">
-              <button id="use-personalization" type="button" class="secondary">Use this suggestion</button>
+            <div class="goal-suggestion-actions">
+              <button id="use-personalization" type="button" class="secondary">Use suggestion</button>
               <button id="keep-local-goal" type="button" class="quiet">Keep my goal</button>
             </div>
           </div>
-        </section>
-        <div class="actions"><button type="submit">Start goal &amp; timer</button>
-        <button id="back" type="button" class="secondary">Back to project setup</button></div>
+        </div>
+        <div class="actions goal-form-actions">
+          <button type="submit">Start goal &amp; timer</button>
+          <button id="back" type="button" class="quiet">Back to project setup</button>
+        </div>
       </form>
     </section>
 

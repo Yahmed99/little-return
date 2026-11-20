@@ -122,6 +122,15 @@ input[type=checkbox] { width: 1.3rem; height: 1.3rem; accent-color: var(--accent
 .tab-count { font-size: .8rem; background: var(--tint); color: var(--accent); border-radius: var(--pill-r); padding: 0 .5rem; font-variant-numeric: tabular-nums; }
 .tab-panel { padding-top: 1.5rem; }
 #panel-new { max-width: 640px; }
+#panel-projects { display: grid; gap: 1rem; padding-block: clamp(.9rem, 3vw, 1.4rem) 1rem; }
+#panel-projects > button { justify-self: start; }
+#saved:empty { display: none; }
+#saved-empty { max-width: none; padding: clamp(1rem, 4vw, 1.5rem); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+#saved-empty p { max-width: 56ch; }
+#saved .card { padding: clamp(.9rem, 3vw, 1.2rem); }
+#saved .project-card-header { align-items: center; }
+#saved .project-card-header h3 { margin: 0; }
+#saved .project-time { margin-bottom: 0; }
 
 /* Cards */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 1rem; }
@@ -244,7 +253,17 @@ button.danger { text-decoration: underline; text-underline-offset: .2em; }
 }
 
 
-.goal-personalization { margin-block: 1.25rem; padding-block: 1rem; border-block: 1px solid var(--line); }
-.goal-personalization h2 { margin: 0 0 .5rem; }
+#goal-form { max-width: 640px; }
+#goal-context { margin-top: 0; }
+.goal-duration { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+#next-goal-minutes { width: 5.5rem; margin: 0; }
+.goal-personalization { margin-block: .85rem; }
+.goal-suggestion-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
+#personalization-guest button, .goal-suggestion-actions .quiet { padding-inline: .5rem; }
+#personalization-options { margin-top: .5rem; }
+#personalization-options summary { width: fit-content; padding-block: .3rem; color: var(--muted); cursor: pointer; font-size: .9rem; }
+#personalization-privacy { margin: .35rem 0 .75rem; }
 #personalization-status:empty { margin: 0; }
-#personalization-preview { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--control-r); overflow-wrap: anywhere; }
+#personalization-preview { padding: .85rem; border-left: 3px solid var(--accent); background: var(--tint); overflow-wrap: anywhere; }
+#personalization-text { margin: 0 0 .6rem; }
+.goal-form-actions { border-top: 1px solid var(--line); padding-top: .85rem; }
