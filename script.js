@@ -444,7 +444,7 @@ function setup() {
 }
 
 // Keep tab state in memory: switching panels never resets a partially filled form.
-const homeTabs = ["projects", "gallery", "new"];
+const homeTabs = ["projects", "new", "gallery"];
 
 function selectHomeTab(tab, focus = false) {
     if (!homeTabs.includes(tab)) return;
@@ -471,7 +471,7 @@ for (const tab of homeTabs) {
     };
 }
 document.querySelectorAll("[data-open-new]").forEach(button => {
-    button.onclick = () => { selectHomeTab("new"); $("project-name").focus(); };
+    button.onclick = () => { selectHomeTab("new"); $("hobby").focus(); };
 });
 document.querySelectorAll("[data-open-projects]").forEach(button => {
     button.onclick = () => selectHomeTab("projects", true);
@@ -511,8 +511,9 @@ function home(tab = homeTab) {
         note.textContent = session.goalCompleted ? `Completed goal: ${session.goal}` : `Current goal: ${session.goal}`;
         const lastNote = document.createElement("p");
         lastNote.className = "preserve";
-        lastNote.textContent = recovery?.note ?? session.note;
-        lastNote.hidden = !lastNote.textContent;
+        const nextNote = (recovery?.note ?? session.note).trim();
+        lastNote.textContent = nextNote ? `Next time: ${nextNote}` : "";
+        lastNote.hidden = !nextNote;
 
         const time = document.createElement("p");
         time.className = "hint project-time";
@@ -1085,24 +1086,53 @@ $("cancel-setup").onclick = () => {
 
 function checkpointGoal() {
     if (draft && !$("goal-screen").hidden) {
-        writeDraft(draftKey(), { project: draft, goal: $("goal").value, context: $("goal-context").textContent });
+        writeDraft(draftKey(), {
+            project: draft,
+            goal: $("goal").value,
+            context: $("goal-context").textContent,
+            minutes: draft.nextGoal ? $("next-goal-minutes").value : undefined
+        });
     }
 }
 
+function showNextGoalTimer(minutes = "") {
+    $("next-goal-timer").hidden = !draft.nextGoal;
+    $("next-goal-minutes").disabled = !draft.nextGoal;
+    $("next-goal-minutes").value = draft.nextGoal ? minutes : "";
+}
+
 $("goal").addEventListener("input", checkpointGoal);
-$("resume-goal-draft").onclick = () => {
-    const saved = readDraft(draftKey());
-    if (!saved) return;
+$("next-goal-minutes").addEventListener("input", checkpointGoal);
+
+function restoreGoalDraft(saved) {
     draft = saved.project;
     $("goal").value = saved.goal;
     $("goal-context").textContent = saved.context;
-    $("back").textContent = "Back to projects";
+    $("back").textContent = draft.nextGoal ? "Back to projects" : "Back to project setup";
+    showNextGoalTimer(saved.minutes ?? draft.minutes);
     show("goal-screen");
+}
+
+$("resume-goal-draft").onclick = () => {
+    const saved = readDraft(draftKey());
+    if (saved) restoreGoalDraft(saved);
 };
 
 $("back").onclick = () => {
     say();
-    home();
+    if (!draft || draft.nextGoal) {
+        home("projects");
+        return;
+    }
+    home("new");
+    if (state.hobbies.includes(draft.hobby)) $("hobby").value = draft.hobby;
+    $("minutes").value = draft.minutes;
+    $("project-name").value = draft.projectName;
+    $("idea").value = draft.idea;
+    $("materials").value = draft.materials;
+    syncChips();
+    updateHobbyExamples();
+    $("hobby").focus();
 };
 
 $("plan-form").onsubmit = event => {
@@ -1127,7 +1157,8 @@ $("plan-form").onsubmit = event => {
     `${draft.projectName || names[draft.hobby]} · ${draft.minutes} minutes` +
     (draft.materials ? ` · ${draft.materials}` : "");
 
-    $("back").textContent = "Back to project details";
+    $("back").textContent = "Back to project setup";
+    showNextGoalTimer();
     say();
     show("goal-screen");
     checkpointGoal();
@@ -1146,9 +1177,12 @@ $("goal-form").onsubmit = async event => {
     const epoch = generation;
     const key = draftKey();
     const startingNewProject = !draft.nextGoal;
+    const minutesField = $("next-goal-minutes");
+    if (!startingNewProject && !minutesField.reportValidity()) return;
     const session = {
         ...draft,
         goal,
+        minutes: startingNewProject ? draft.minutes : minutesField.valueAsNumber,
         id: draft.id || (draft.id = crypto.randomUUID()),
         note: draft.note || "",
         photo: draft.photo || "",
@@ -1162,6 +1196,7 @@ $("goal-form").onsubmit = async event => {
     const button = $("goal-form").querySelector('[type="submit"]');
     button.disabled = true;
     $("goal").disabled = true;
+    minutesField.disabled = true;
     checkpointGoal();
     try {
         const result = await saveSession(session);
@@ -1174,7 +1209,11 @@ $("goal-form").onsubmit = async event => {
             homeTab = "projects";
             await openSession(session.id, false, true);
         }
-    } finally { button.disabled = false; $("goal").disabled = false; }
+    } finally {
+        button.disabled = false;
+        $("goal").disabled = false;
+        minutesField.disabled = !draft?.nextGoal;
+    }
 };
 
 async function openSession(id, refresh = true, autoStart = false) {
@@ -1506,6 +1545,11 @@ $("done-home").onclick = () => { home("projects"); say(); };
 
 $("continue-project").onclick = () => {
     const project = state.sessions.find(item => item.id === activeId);
+    const saved = readDraft(draftKey());
+    if (saved?.project.nextGoal && saved.project.id === project.id) {
+        restoreGoalDraft(saved);
+        return;
+    }
     // Older completed goals predate timer checkpoints; seed one when continuing.
     const taskHistory = project.taskHistory.map((task, index, tasks) =>
         index === tasks.length - 1 && task.projectElapsedSeconds === undefined
@@ -1529,6 +1573,7 @@ $("continue-project").onclick = () => {
     $("goal").value = recommend(draft.hobby, draft.minutes, draft.materials, draft.idea);
     $("goal-context").textContent = `${draft.projectName || draft.idea || names[draft.hobby]} · Next goal`;
     $("back").textContent = "Back to projects";
+    showNextGoalTimer(draft.minutes);
     say();
     show("goal-screen");
     checkpointGoal();
@@ -1544,7 +1589,9 @@ $("finish-project").onclick = async () => {
         if (result) {
             activeId = null;
             home("gallery");
-            if (result === true) say("Project completed and moved to Finished.");
+            if (result === true) {
+                say(user ? "Project saved to your account and moved to Finished." : "Project saved on this browser and moved to Finished.");
+            }
         }
     } finally { button.disabled = false; }
 };
@@ -1566,8 +1613,7 @@ $("leave").onclick = () => {
     if (
         hasUnsavedProgress() &&
         !confirm(
-            "Leave without saving these changes? " +
-            "Your previously saved progress will remain."
+            "Discard your note and photo edits? Your previously saved progress and tracked time will remain."
         )
     ) {
         return;
@@ -1774,3 +1820,18 @@ state = readCache(KEY);
 guestCount = state.sessions.length;
 landing();
 initializeCloud();
+
+window.addEventListener("offline", () => {
+    cloudReady = false;
+    accountUI();
+    if (!$("error").textContent) {
+        say(user ? "You’re offline. Save on this browser and sync when you reconnect." : "You’re offline. Guest projects stay on this browser.");
+    }
+});
+
+window.addEventListener("online", () => {
+    accountUI();
+    if (!$("error").textContent) {
+        say(user ? "You’re back online. Open Account to sync pending saves or refresh projects." : "You’re back online. Guest projects stay on this browser.");
+    }
+});

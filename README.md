@@ -55,9 +55,9 @@ JavaScript syntax (`node --check script.js`) and patch whitespace checks passed.
 
 ## Task timer
 
-The project form labels the editable duration as **Set your timer**, with guidance for any whole number from 1–180 minutes. The 10/20/30/45-minute quick choices remain available below it.
+The project form labels the editable duration as **How much time do you have?**, with guidance for any whole number from 1–180 minutes. The 10/20/30/45-minute quick choices remain available below it.
 
-Opening an unfinished goal starts a countdown using its planned minutes. Pause/Resume controls exclude breaks. The timer pauses while the tab is hidden and resumes on return only if it was running. At zero it counts overtime; completion is always your choice. Saving or completing a goal stops the timer and persists the project total through the existing save flow. Completed goals keep time checkpoints in `task_history`, so the next goal gets a fresh countdown without resetting the project's total. No additional database columns are needed. For older goals without a checkpoint, existing tracked time is treated as time on the current goal until it is completed.
+Starting a goal begins a countdown using its planned minutes. On **Plan the next goal**, the timer defaults to the previous goal’s duration and accepts any whole number from 1 to 180 minutes. A reopened goal starts paused. Pause/Resume controls exclude breaks. The timer pauses while the tab is hidden and resumes on return only if it was running. At zero it counts overtime; completion is always your choice. Saving or completing a goal stops the timer and persists the project total through the existing save flow. Completed goals keep time checkpoints in `task_history`, so the next goal gets a fresh countdown without resetting the project's total. No additional database columns are needed. For older goals without a checkpoint, existing tracked time is treated as time on the current goal until it is completed.
 
 ## Project detail history
 

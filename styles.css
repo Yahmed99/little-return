@@ -166,7 +166,7 @@ input[type=checkbox] { width: 1.3rem; height: 1.3rem; accent-color: var(--accent
 #photo-selection { margin: .75rem 0 0; overflow-wrap: anywhere; }
 #preview, .history-photo { display: block; max-width: 100%; height: auto; max-height: 480px; object-fit: contain; border-radius: var(--control-r); margin: 1rem 0; }
 #preview { max-height: 300px; }
-#complete-task { flex: 1 1 100%; }
+#save-progress { flex: 1 1 100%; }
 #progress-form .actions { border-top: 1px solid var(--line); padding-top: 1.25rem; }
 .choice-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; padding: 1.25rem 0; border-top: 1px solid var(--line); }
 .choice-row p { margin: 0; max-width: 44ch; }
@@ -188,7 +188,7 @@ footer { padding: 1.5rem 0 2rem; color: var(--muted); font-size: .85rem; max-wid
   .hobby-option { flex-direction: column; align-items: flex-start; }
   .how { grid-template-columns: repeat(3, 1fr); }
   .how > li { flex-direction: column; gap: .4rem; }
-  #complete-task { flex: 0 0 auto; }
+  #save-progress { flex: 0 0 auto; }
 }
 @media (min-width: 800px) {
   .work { grid-template-columns: 1.2fr 1fr; align-items: start; }
