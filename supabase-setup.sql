@@ -15,21 +15,24 @@ create table if not exists public.sessions (
   completed_at timestamptz,
   storage_path text check (storage_path is null or split_part(storage_path, '/', 1) = user_id::text),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  last_save_id uuid
 );
 alter table public.sessions add column if not exists project_name text not null default '' check (length(project_name) <= 120);
 alter table public.sessions add column if not exists task_history jsonb not null default '[]'::jsonb check (jsonb_typeof(task_history) = 'array');
 alter table public.sessions add column if not exists elapsed_seconds integer not null default 0 check (elapsed_seconds >= 0);
 alter table public.sessions add column if not exists goal_completed boolean not null default false;
 alter table public.sessions add column if not exists completed_at timestamptz;
+alter table public.sessions add column if not exists last_save_id uuid;
 create index if not exists sessions_user_updated_idx on public.sessions(user_id, updated_at desc);
 
 create or replace function public.touch_session_updated_at()
 returns trigger language plpgsql set search_path = '' as $$
 begin
-  new.updated_at = now();
+  new.updated_at = clock_timestamp();
   if TG_OP = 'UPDATE' then
     new.created_at = old.created_at;
+    new.updated_at = greatest(new.updated_at, old.updated_at + interval '1 microsecond');
   end if;
   return new;
 end;

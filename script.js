@@ -73,20 +73,25 @@ let state = { hobbies: [], sessions: [] };
 let draft;
 let activeId;
 let detailId = null;
+let openRequest = 0;
 let blocked = false;
 let client = null;
 let user = null;
 let cloudReady = false;
 let generation = 0;
 let saving = false;
+let saveRevision = 0;
+const volatileDrafts = new Map();
 let guestCount = 0;
 let homeTab = "projects";
 let timerInterval = null;
 let timerCheckpoint = null;
+let timerLockRequest = null;
+let releaseTimerLock = null;
 let timerWrites = 0;
 let resumeTimerOnVisible = false;
-let selectedPhoto = null;
 let selectedPhotoPreview = "";
+let selectedPhotoRef = "";
 let savedPhotoUrl = "";
 let photoReading = false;
 let photoSelectionVersion = 0;
@@ -95,6 +100,86 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const emptyState = () => ({ hobbies: [], sessions: [] });
 const cacheKey = () => user ? `${KEY}:user:${user.id}` : KEY;
 const pending = () => state.sessions.filter(item => item.pending);
+const draftKey = (id = "goal") => `${cacheKey()}:draft:${id}`;
+
+function readDraft(key) {
+    try { return volatileDrafts.get(key) || JSON.parse(localStorage.getItem(key)); }
+    catch { return volatileDrafts.get(key) || null; }
+}
+
+function writeDraft(key, value) {
+    volatileDrafts.set(key, value);
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+        volatileDrafts.delete(key);
+        return true;
+    } catch {
+        say("Browser storage is full or blocked. Your draft is available for this visit. Keep this page open and try saving again.", true);
+        return false;
+    }
+}
+
+function clearDraft(key) {
+    volatileDrafts.delete(key);
+    try { localStorage.removeItem(key); } catch { /* Browser storage may be unavailable. */ }
+}
+
+let photoDatabase;
+function localPhotoStore() {
+    photoDatabase ||= new Promise((resolve, reject) => {
+        const request = indexedDB.open("little-return-photos", 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("photos");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    }).catch(error => { photoDatabase = null; throw error; });
+    return photoDatabase;
+}
+
+async function storeLocalPhoto(blob) {
+    const db = await localPhotoStore();
+    const reference = `photo:${crypto.randomUUID()}`;
+    await new Promise((resolve, reject) => {
+        const transaction = db.transaction("photos", "readwrite");
+        transaction.objectStore("photos").put(blob, reference);
+        transaction.oncomplete = resolve;
+        transaction.onabort = () => reject(transaction.error);
+    });
+    return reference;
+}
+
+async function localPhotoBlob(reference) {
+    if (!reference.startsWith("photo:")) return (await fetch(reference)).blob();
+    const db = await localPhotoStore();
+    return new Promise((resolve, reject) => {
+        const request = db.transaction("photos").objectStore("photos").get(reference);
+        request.onsuccess = () => request.result ? resolve(request.result) : reject(new Error("The browser photo is missing"));
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function localPhotoUrl(reference) {
+    return reference.startsWith("photo:") ? readPhoto(await localPhotoBlob(reference)) : reference;
+}
+
+async function removeUnreferencedPhotos(photos) {
+    const references = new Set(photos.filter(photo => photo?.startsWith("photo:")));
+    if (!references.size) return;
+    const db = await localPhotoStore();
+    const saved = Array.from(volatileDrafts.values(), value => JSON.stringify(value));
+    for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key === KEY || key?.startsWith(`${KEY}:`)) saved.push(localStorage.getItem(key) || "");
+    }
+    await new Promise((resolve, reject) => {
+        const transaction = db.transaction("photos", "readwrite");
+        const store = transaction.objectStore("photos");
+        for (const reference of references) {
+            if (!saved.some(value => value.includes(reference))) store.delete(reference);
+        }
+        transaction.oncomplete = resolve;
+        transaction.onabort = () => reject(transaction.error);
+    });
+}
 
 function accountUI() {
     $("account-label").textContent = user
@@ -127,7 +212,7 @@ function readCache(key) {
                     task && typeof task.goal === "string" && typeof task.completedAt === "string"))) &&
                 (!item.elapsedSeconds || (Number.isFinite(item.elapsedSeconds) && item.elapsedSeconds >= 0)) &&
                 (!item.completedAt || typeof item.completedAt === "string") &&
-                (!item.photo || /^data:image\/(jpeg|png|webp);base64,/.test(item.photo)))) {
+                (!item.photo || /^(photo:[0-9a-f-]+$|data:image\/(jpeg|png|webp);base64,)/.test(item.photo)))) {
             throw new Error("Invalid browser data");
         }
         return {
@@ -186,6 +271,7 @@ async function loadCloud() {
     const owner = user;
     const epoch = generation;
     if (!owner) return;
+    const revision = saveRevision;
     try {
         // Page explicitly: Supabase normally caps each response at 1,000 rows.
         let rows = [];
@@ -196,9 +282,10 @@ async function loadCloud() {
             rows.push(...data);
             if (data.length < 500) break;
         }
-        if (epoch !== generation) return;
-        const waiting = pending();
-        state.sessions = [...rows.filter(r => !waiting.some(p => p.id === r.id)).map(fromRow), ...waiting];
+        if (epoch !== generation || revision !== saveRevision || saving) return;
+        const waiting = state.sessions.filter(project => project.pending || readDraft(draftKey(project.id)));
+        const waitingIds = new Set(waiting.map(project => project.id));
+        state.sessions = [...rows.filter(row => !waitingIds.has(row.id)).map(fromRow), ...waiting];
         cloudReady = true;
         inferHobbies();
         writeCache(state);
@@ -212,7 +299,7 @@ async function loadCloud() {
 
 async function uploadPhoto(session, owner) {
     if (!session.photo) return session.storage_path || null;
-    const blob = await (await fetch(session.photo)).blob();
+    const blob = await localPhotoBlob(session.photo);
     const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[blob.type];
     if (!extension || blob.size > MAX_PHOTO_BYTES) throw new Error("Invalid progress photo");
     const path = `${owner.id}/${session.id}/${crypto.randomUUID()}.${extension}`;
@@ -222,6 +309,13 @@ async function uploadPhoto(session, owner) {
 }
 
 async function persistCloud(session, owner) {
+    if (session.pending) {
+        const { data, error } = await client.from("sessions").select("*")
+            .eq("id", session.id).eq("user_id", owner.id).maybeSingle();
+        if (error) throw error;
+        if (data && session.saveId && data.last_save_id === session.saveId) return fromRow(data);
+        if (session.updated_at ? data?.updated_at !== session.updated_at : !!data) throw cloudConflict();
+    }
     const path = await uploadPhoto(session, owner);
     const history = [];
     for (const task of session.taskHistory || []) {
@@ -236,10 +330,18 @@ async function persistCloud(session, owner) {
         goal: session.goal, note: session.note,
         storage_path: path, created_at: session.created_at || new Date(session.updated).toISOString(),
         task_history: history, elapsed_seconds: session.elapsedSeconds || 0,
-        goal_completed: !!session.goalCompleted, completed_at: session.completedAt || null
+        goal_completed: !!session.goalCompleted, completed_at: session.completedAt || null,
+        last_save_id: session.saveId
     };
-    const { data, error } = await client.from("sessions").upsert(row).select().single();
+    const table = client.from("sessions");
+    const request = session.updated_at
+        ? table.update(row).eq("id", session.id).eq("user_id", owner.id).eq("updated_at", session.updated_at)
+        : table.insert(row);
+    const { data, error } = await request.select().maybeSingle();
     // If a response is lost, keep the upload: the database may already reference it.
+    if (error?.code === "23505" || (!error && !data)) {
+        throw cloudConflict();
+    }
     if (error) throw error;
     if (session.storage_path && session.storage_path !== path && !history.some(task => task.storage_path === session.storage_path)) {
         await client.storage.from(BUCKET).remove([session.storage_path]).catch(() => {});
@@ -247,13 +349,24 @@ async function persistCloud(session, owner) {
     return fromRow(data);
 }
 
-async function saveSession(session) {
-    if (saving) return false;
+function cloudConflict() {
+    return Object.assign(new Error("This project was changed or deleted elsewhere"), { conflict: true });
+}
+
+async function saveSession(session, retry = false) {
+    if (saving) {
+        say("Another save is in progress. Try again when it finishes.", true);
+        return false;
+    }
     saving = true;
+    saveRevision++;
     const owner = user;
     const epoch = generation;
     try {
+        if (owner && (!retry || !session.saveId)) session = { ...session, saveId: crypto.randomUUID() };
         let saved = { ...session, pending: !!owner };
+        const pendingState = { ...state, sessions: [...state.sessions.filter(s => s.id !== session.id), saved] };
+        const staged = writeCache(pendingState);
         if (owner) {
             try {
                 saved = await persistCloud(session, owner);
@@ -262,19 +375,24 @@ async function saveSession(session) {
             } catch (error) {
                 if (epoch !== generation) return false;
                 cloudReady = false;
-                const next = { ...state, sessions: [...state.sessions.filter(s => s.id !== session.id), saved] };
-                if (!writeCache(next)) {
+                if (!staged) {
                     say(`Cloud save failed: ${error.message}. Browser fallback also failed. Your changes remain on this screen; copy your notes or try again.`, true);
                     return false;
                 }
-                state = next;
-                say(`Cloud save failed: ${error.message}. Saved only on this browser. Use Save pending changes to retry.`, true);
+                if (error.conflict) {
+                    saved.conflict = true;
+                    writeCache(pendingState);
+                }
+                state = pendingState;
+                say(error.conflict
+                    ? `${error.message}. Your edits are saved on this browser. Use Keep as a separate project from the project card.`
+                    : `Cloud save failed: ${error.message}. Saved only on this browser. Use Save pending changes to retry.`, true);
                 return "local";
             }
         }
         if (epoch !== generation) return false;
         const next = { ...state, sessions: [...state.sessions.filter(s => s.id !== session.id), saved] };
-        const cached = writeCache(next);
+        const cached = owner ? writeCache(next) : staged;
         if (!owner && !cached) {
             say("Browser save failed. Storage may be blocked or full. Your changes remain on this screen; try removing the photo.", true);
             return false;
@@ -360,6 +478,11 @@ document.querySelectorAll("[data-open-projects]").forEach(button => {
 });
 
 function home(tab = homeTab) {
+    const goalDraft = readDraft(draftKey());
+    const started = goalDraft && state.sessions.some(project =>
+        project.id === goalDraft.project.id && project.goal === goalDraft.goal.trim() && !project.goalCompleted);
+    if (started) clearDraft(draftKey());
+    $("resume-goal-draft").hidden = !goalDraft || started;
     const selectedHobby = $("hobby").value;
     $("hobby").replaceChildren(
         ...state.hobbies.map(hobby => new Option(names[hobby], hobby))
@@ -384,7 +507,12 @@ function home(tab = homeTab) {
 
         const note = document.createElement("p");
         note.className = "preserve";
-        note.textContent = session.note || session.goal;
+        const recovery = readDraft(draftKey(session.id));
+        note.textContent = session.goalCompleted ? `Completed goal: ${session.goal}` : `Current goal: ${session.goal}`;
+        const lastNote = document.createElement("p");
+        lastNote.className = "preserve";
+        lastNote.textContent = recovery?.note ?? session.note;
+        lastNote.hidden = !lastNote.textContent;
 
         const time = document.createElement("p");
         time.className = "hint project-time";
@@ -400,7 +528,8 @@ function home(tab = homeTab) {
         };
 
         const { header, editor } = projectControls(session, title);
-        card.append(header, note, time, button, editor);
+        card.append(header, note, lastNote, time, button, editor);
+        if (session.conflict) card.append(conflictButton(session));
         $("saved").append(card);
     }
     $("saved-empty").hidden = sessions.some(item => !item.completedAt);
@@ -447,9 +576,80 @@ function renderCompletedProjects(projects) {
         open.onclick = () => openProjectDetails(project.id);
         const { header, editor } = projectControls(project, title);
         card.append(header, meta, description, open, editor);
+        if (project.conflict) card.append(conflictButton(project));
         gallery.append(card);
     }
     $("completed-empty").hidden = projects.length > 0;
+}
+
+function conflictButton(project) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = "Keep as a separate project";
+    button.onclick = async () => {
+        if (saving || !user) return;
+        const owner = user;
+        const epoch = generation;
+        button.disabled = true;
+        try {
+            const id = await stableProjectId(`conflict:${project.id}:${project.saveId}`);
+            if (epoch !== generation) return;
+            let copy = state.sessions.find(item => item.id === id);
+            if (!copy) {
+                const { data, error } = await client.from("sessions").select("*")
+                    .eq("id", id).eq("user_id", owner.id).maybeSingle();
+                if (error) throw error;
+                if (data) copy = fromRow(data);
+            }
+            if (epoch !== generation) return;
+            if (!copy) {
+                const photos = new Map();
+                const keepPhoto = async record => {
+                    if (record.photo || !record.storage_path) return record.photo || "";
+                    if (!photos.has(record.storage_path)) {
+                        const { data, error } = await client.storage.from(BUCKET).download(record.storage_path);
+                        if (error) throw error;
+                        photos.set(record.storage_path, await storeLocalPhoto(data));
+                    }
+                    return photos.get(record.storage_path);
+                };
+                const taskHistory = [];
+                for (const task of project.taskHistory) {
+                    taskHistory.push({ ...task, photo: await keepPhoto(task), storage_path: null });
+                }
+                copy = {
+                    ...project, id, updated_at: null, storage_path: null,
+                    projectName: `${(project.projectName || project.idea || names[project.hobby]).slice(0, 113)} (copy)`,
+                    photo: await keepPhoto(project), taskHistory, conflict: false, pending: false,
+                    updated: Date.now()
+                };
+            }
+            if (epoch !== generation) return;
+            const result = !copy.pending && copy.updated_at
+                ? true : await saveSession(copy, !!copy.pending);
+            if (epoch !== generation || !result) return;
+            if (result === "local") { home(); return; }
+            const { data, error } = await client.from("sessions").select("*")
+                .eq("id", project.id).eq("user_id", owner.id).maybeSingle();
+            if (error) throw error;
+            if (epoch !== generation) return;
+            if (state.sessions.find(item => item.id === project.id) !== project) {
+                throw new Error("The local project changed while the copy was being saved");
+            }
+            const next = { ...state, sessions: state.sessions.filter(item => item.id !== project.id) };
+            if (data) next.sessions.push(fromRow(data));
+            if (!writeCache(next)) throw new Error("The copy was saved, but the browser could not update the project list");
+            state = next;
+            clearDraft(draftKey(project.id));
+            accountUI();
+            home();
+            say("Your edits were saved as a separate project.");
+        } catch (error) {
+            if (epoch === generation) say(`Could not finish saving the separate project: ${error.message}.`, true);
+        } finally { button.disabled = false; }
+    };
+    return button;
 }
 
 function projectControls(project, title) {
@@ -466,7 +666,8 @@ function projectControls(project, title) {
     const editor = renameControl(project, menu, trigger);
     const rename = editor.firstElementChild;
     const remove = deleteButton(project);
-    panel.append(rename, remove);
+    panel.append(rename);
+    if (!project.conflict) panel.append(remove);
     menu.append(trigger, panel);
     menu.onkeydown = event => {
         if (event.key === "Escape") {
@@ -580,9 +781,9 @@ async function deleteProject(id, button) {
     if (!project || !confirm(`Permanently delete “${project.projectName || project.idea || names[project.hobby] + " project"}”? All its goals, notes and photos will be removed. This cannot be undone.`)) return;
     const epoch = generation;
     const owner = user;
-    const previous = state;
     const next = { ...state, sessions: state.sessions.filter(item => item.id !== id) };
-    if (!writeCache(next)) { say("Could not update browser storage. Project was not deleted. Reload and try again.", true); return; }
+    if (!owner && !writeCache(next)) { say("Could not update browser storage. Project was not deleted. Reload and try again.", true); return; }
+    saveRevision++;
     saving = true;
     button.disabled = true;
     let cleanupFailed = false;
@@ -593,8 +794,12 @@ async function deleteProject(id, button) {
             if (readError) throw readError;
             if (epoch !== generation) return;
             const paths = [...new Set([...photoPaths(project), ...(data ? photoPaths(fromRow(data)) : [])])];
-            const { error } = await client.from("sessions").delete().eq("id", id).eq("user_id", owner.id);
-            if (error) throw error;
+            if (data) {
+                const { data: deleted, error } = await client.from("sessions").delete()
+                    .eq("id", id).eq("user_id", owner.id).eq("updated_at", data.updated_at).select("id").maybeSingle();
+                if (error) throw error;
+                if (!deleted) throw new Error("This project changed while you were deleting it");
+            }
             if (paths.length) {
                 try {
                     const { error: storageError } = await client.storage.from(BUCKET).remove(paths);
@@ -603,15 +808,24 @@ async function deleteProject(id, button) {
             }
         }
         if (epoch !== generation) return;
+        const cached = !owner || writeCache(next);
         state = next;
+        const recovery = readDraft(draftKey(id));
+        clearDraft(draftKey(id));
+        if (readDraft(draftKey())?.project.id === id) clearDraft(draftKey());
+        try {
+            await removeUnreferencedPhotos([project.photo, recovery?.photo, ...project.taskHistory.map(task => task.photo)]);
+        } catch { cleanupFailed = true; }
+        if (epoch !== generation) return;
         if (!owner) guestCount = state.sessions.length;
         detailId = null;
         home(project.completedAt ? "gallery" : "projects");
         accountUI();
-        say(cleanupFailed ? "Project deleted. Some private photo files could not be removed; storage cleanup is still needed." : "Project deleted.", cleanupFailed);
+        if (cleanupFailed) say("Project deleted. Some photo files could not be removed from storage.", true);
+        else if (!cached) say("Project deleted from your account. The browser cache could not be updated.", true);
+        else say("Project deleted.");
     } catch (error) {
         if (epoch === generation) {
-            writeCache(previous);
             say(`Could not confirm deletion: ${error.message}. Refresh projects before retrying.`, true);
         }
     } finally { saving = false; button.disabled = false; }
@@ -633,8 +847,8 @@ async function appendDetailPhoto(container, record, epoch, id) {
     image.className = "history-photo";
     image.alt = "Saved project progress";
     image.loading = "lazy";
-    let url = record.photo;
     try {
+        let url = await localPhotoUrl(record.photo || "");
         if (!url && user) {
             const { data, error } = await client.storage.from(BUCKET).createSignedUrl(record.storage_path, 3600);
             if (error) throw error;
@@ -755,39 +969,61 @@ function updateTimerLabel() {
 
 function tickTimer(persist = false) {
     if (!activeId || timerCheckpoint === null) return;
-    const now = Date.now();
-    const seconds = Math.max(0, Math.floor((now - timerCheckpoint) / 1000));
+    const seconds = Math.max(0, Math.floor((performance.now() - timerCheckpoint) / 1000));
     if (!seconds) return;
     timerCheckpoint += seconds * 1000;
+    saveRevision++;
     state.sessions = state.sessions.map(item => item.id === activeId
-        ? { ...item, elapsedSeconds: (item.elapsedSeconds || 0) + seconds, updated: now,
-            pending: !!user || item.pending }
+        ? { ...item, elapsedSeconds: (item.elapsedSeconds || 0) + seconds, updated: Date.now(),
+            saveId: undefined, pending: !!user || item.pending }
         : item);
     timerWrites += seconds;
     updateTimerLabel();
-    if (persist || timerWrites >= 15) {
-        writeCache(state);
-        timerWrites = 0;
-    }
+    if (writeCache(state)) timerWrites = 0;
+    else if (!persist) say("Tracked time could not be saved to this browser. Keep this page open and use Save & close to retry.", true);
 }
 
 function startTimer() {
     const session = state.sessions.find(item => item.id === activeId);
     if (!session || session.goalCompleted || session.completedAt || $("session").hidden || document.hidden) return;
-    if (timerCheckpoint !== null) return;
-    timerCheckpoint = Date.now();
-    timerWrites = 0;
-    timerInterval = setInterval(() => tickTimer(), 1000);
-    updateTimerLabel();
+    if (timerCheckpoint !== null || timerLockRequest) return;
+    if (blocked) { say("Reload to pick up browser changes before starting the timer.", true); return; }
+    const begin = () => {
+        timerCheckpoint = performance.now();
+        timerWrites = 0;
+        timerInterval = setInterval(() => tickTimer(), 1000);
+        updateTimerLabel();
+    };
+    if (!navigator.locks) { begin(); return; }
+    const request = {};
+    timerLockRequest = request;
+    navigator.locks.request(`${cacheKey()}:timer:${activeId}`, { ifAvailable: true }, lock => {
+        if (timerLockRequest !== request || document.hidden || $("session").hidden || blocked) return;
+        if (!lock) {
+            say("This project's timer is already running in another tab.", true);
+            return;
+        }
+        begin();
+        return new Promise(resolve => { releaseTimerLock = resolve; });
+    }).catch(() => {
+        if (timerLockRequest === request) say("Could not start the timer. Try again.", true);
+    }).finally(() => {
+        if (timerLockRequest === request) timerLockRequest = null;
+    });
 }
 
 function stopTimer() {
+    timerLockRequest = null;
+    releaseTimerLock?.();
+    releaseTimerLock = null;
+    resumeTimerOnVisible = false;
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = null;
     tickTimer(true);
     timerCheckpoint = null;
-    timerWrites = 0;
-    writeCache(state);
+    if (timerWrites && !writeCache(state)) {
+        say("Tracked time could not be saved to this browser. Keep this page open and use Save & close to retry.", true);
+    }
     updateTimerLabel();
     return state.sessions.find(item => item.id === activeId);
 }
@@ -847,6 +1083,23 @@ $("cancel-setup").onclick = () => {
     home();
 };
 
+function checkpointGoal() {
+    if (draft && !$("goal-screen").hidden) {
+        writeDraft(draftKey(), { project: draft, goal: $("goal").value, context: $("goal-context").textContent });
+    }
+}
+
+$("goal").addEventListener("input", checkpointGoal);
+$("resume-goal-draft").onclick = () => {
+    const saved = readDraft(draftKey());
+    if (!saved) return;
+    draft = saved.project;
+    $("goal").value = saved.goal;
+    $("goal-context").textContent = saved.context;
+    $("back").textContent = "Back to projects";
+    show("goal-screen");
+};
+
 $("back").onclick = () => {
     say();
     home();
@@ -877,6 +1130,7 @@ $("plan-form").onsubmit = event => {
     $("back").textContent = "Back to project details";
     say();
     show("goal-screen");
+    checkpointGoal();
 };
 
 $("goal-form").onsubmit = async event => {
@@ -889,7 +1143,9 @@ $("goal-form").onsubmit = async event => {
         return;
     }
 
-    const startingNewProject = !draft.id;
+    const epoch = generation;
+    const key = draftKey();
+    const startingNewProject = !draft.nextGoal;
     const session = {
         ...draft,
         goal,
@@ -905,38 +1161,50 @@ $("goal-form").onsubmit = async event => {
 
     const button = $("goal-form").querySelector('[type="submit"]');
     button.disabled = true;
+    $("goal").disabled = true;
+    checkpointGoal();
     try {
         const result = await saveSession(session);
-        if (result) {
+        if (result && epoch === generation) {
+            clearDraft(key);
             if (startingNewProject) {
                 $("plan-form").reset(); syncChips();
                 updateHobbyExamples();
             }
             homeTab = "projects";
-            await openSession(session.id, false);
+            await openSession(session.id, false, true);
         }
-    } finally { button.disabled = false; }
+    } finally { button.disabled = false; $("goal").disabled = false; }
 };
 
-async function openSession(id, refresh = true) {
+async function openSession(id, refresh = true, autoStart = false) {
     const epoch = generation;
+    const request = ++openRequest;
+    saveRevision++;
     const owner = user;
     let session = state.sessions.find(item => item.id === id);
     if (!session) return;
-    if (owner && refresh && !session.pending) {
+    let recovery = readDraft(draftKey(id));
+    if (recovery && recovery.note.trim() === session.note &&
+        (!recovery.photo || recovery.photo === session.photo) &&
+        (!recovery.removePhoto || (!session.photo && !session.storage_path))) {
+        clearDraft(draftKey(id));
+        recovery = null;
+    }
+    if (owner && refresh && !session.pending && !recovery) {
         try {
             const { data, error } = await client.from("sessions").select("*").eq("id", id).eq("user_id", owner.id).single();
             if (error) throw error;
-            if (epoch !== generation) return;
+            if (epoch !== generation || request !== openRequest) return;
             session = fromRow(data);
             state.sessions = state.sessions.map(s => s.id === id ? session : s);
             writeCache(state);
         } catch (error) {
-            if (epoch !== generation) return;
+            if (epoch !== generation || request !== openRequest) return;
             say(`Could not refresh this session: ${error.message}. Showing the browser copy.`, true);
         }
     }
-    if (epoch !== generation) return;
+    if (epoch !== generation || request !== openRequest) return;
     activeId = id;
     if (session.goalCompleted) {
         showCompletionChoice(session);
@@ -949,28 +1217,57 @@ async function openSession(id, refresh = true) {
     $("session-meta").textContent = `${names[session.hobby]} · ${session.minutes}-minute goal` +
         (session.materials ? ` · ${session.materials}` : "");
     $("note").value = session.note;
-    savedPhotoUrl = session.photo || "";
+    savedPhotoUrl = "";
     resetNewPhoto();
     $("remove-photo").checked = false;
     $("photo-controls").hidden = false;
     $("preview").hidden = true;
     $("preview").removeAttribute("src");
     $("remove-wrap").hidden = !(session.photo || session.storage_path);
+    if (recovery) {
+        $("note").value = recovery.note;
+        selectedPhotoRef = recovery.photo;
+        $("remove-photo").checked = recovery.removePhoto;
+        if (recovery.photo) {
+            $("photo-selection").textContent = "Recovered photo draft";
+            $("clear-photo").hidden = false;
+        }
+        refreshPhotoPreview();
+        say("Recovered your unsaved draft. Save & close to keep these edits.");
+    }
     show("session");
-    resumeTimerOnVisible = document.hidden;
+    resumeTimerOnVisible = autoStart && document.hidden;
     updateTimerLabel();
-    startTimer();
-    let url = session.photo;
-    if (!url && session.storage_path && owner) {
+    if (autoStart) startTimer();
+    const version = photoSelectionVersion;
+    if (selectedPhotoRef) {
         try {
+            const preview = await localPhotoUrl(selectedPhotoRef);
+            if (epoch === generation && request === openRequest && activeId === id && version === photoSelectionVersion && !$("session").hidden) {
+                selectedPhotoPreview = preview;
+                refreshPhotoPreview();
+            }
+        } catch (error) {
+            if (epoch === generation && request === openRequest && activeId === id && version === photoSelectionVersion) {
+                say(`Could not load your draft photo: ${error.message}. Clear it or choose a replacement.`, true);
+            }
+        }
+    }
+    try {
+        let url = await localPhotoUrl(session.photo || "");
+        if (!url && session.storage_path && owner) {
             const { data, error } = await client.storage.from(BUCKET).createSignedUrl(session.storage_path, 3600);
             if (error) throw error;
             url = data.signedUrl;
-        } catch { say("Your photo could not be loaded. The saved photo is still attached; try opening this session again.", true); }
-    }
-    if (epoch === generation && activeId === id && !$("session").hidden && url) {
-        savedPhotoUrl = url;
-        refreshPhotoPreview();
+        }
+        if (epoch === generation && request === openRequest && activeId === id && !$("session").hidden && url) {
+            savedPhotoUrl = url;
+            refreshPhotoPreview();
+        }
+    } catch (error) {
+        if (epoch === generation && request === openRequest && activeId === id) {
+            say(`Could not load the saved photo: ${error.message}. Reopen the project to retry.`, true);
+        }
     }
 }
 
@@ -984,8 +1281,8 @@ function refreshPhotoPreview() {
 function resetNewPhoto() {
     photoSelectionVersion++;
     photoReading = false;
-    selectedPhoto = null;
     selectedPhotoPreview = "";
+    selectedPhotoRef = "";
     $("photo").value = "";
     $("camera-photo").value = "";
     $("photo-selection").textContent = "No new photo selected.";
@@ -998,7 +1295,7 @@ async function prepareProgressPhoto(file) {
         throw new Error("Choose a JPEG, PNG or WebP photo.");
     }
     if (file.size <= MAX_PHOTO_BYTES) return file;
-    if (file.size > 25 * 1024 * 1024) throw new Error("Choose a photo smaller than 25 MB.");
+    if (file.size > 25 * 1024 * 1024) throw new Error("Choose a photo up to 25 MiB.");
     const url = URL.createObjectURL(file);
     try {
         const image = await new Promise((resolve, reject) => {
@@ -1009,7 +1306,7 @@ async function prepareProgressPhoto(file) {
         });
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d");
-        if (!context) throw new Error("Photo resizing is unavailable. Choose a photo up to 5 MB.");
+        if (!context) throw new Error("Photo resizing is unavailable. Choose a photo up to 5 MiB.");
         for (const edge of [1600, 1200, 900]) {
             const scale = Math.min(1, edge / Math.max(image.naturalWidth, image.naturalHeight));
             canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -1022,7 +1319,7 @@ async function prepareProgressPhoto(file) {
                 return new File([blob], "progress-photo.jpg", { type: "image/jpeg" });
             }
         }
-        throw new Error("Could not resize this photo below 5 MB. Choose a smaller photo.");
+        throw new Error("Could not resize this photo below 5 MiB. Choose a smaller photo.");
     } finally { URL.revokeObjectURL(url); }
 }
 
@@ -1035,16 +1332,20 @@ async function selectProgressPhoto(file) {
     try {
         const prepared = await prepareProgressPhoto(file);
         const preview = await readPhoto(prepared);
+        let reference;
+        try { reference = await storeLocalPhoto(prepared); }
+        catch { reference = preview; }
         if (version !== photoSelectionVersion) return;
-        selectedPhoto = prepared;
+        selectedPhotoRef = reference;
         selectedPhotoPreview = preview;
         $("remove-photo").checked = false;
         $("photo-selection").textContent = `${file.name} · ${Math.ceil(prepared.size / 1024)} KB · Ready to save`;
         refreshPhotoPreview();
+        checkpointProgress();
     } catch (error) {
         if (version !== photoSelectionVersion) return;
-        $("photo-selection").textContent = selectedPhoto ? "Previous selection kept. Choose another photo to replace it." : "No new photo selected.";
-        $("clear-photo").hidden = !selectedPhoto;
+        $("photo-selection").textContent = selectedPhotoRef ? "Previous selection kept. Choose another photo to replace it." : "No new photo selected.";
+        $("clear-photo").hidden = !selectedPhotoRef;
         say(error.message, true);
     } finally {
         if (version === photoSelectionVersion) {
@@ -1059,8 +1360,22 @@ $("choose-photo").onclick = () => $("photo").click();
 $("take-photo").onclick = () => $("camera-photo").click();
 $("photo").onchange = event => selectProgressPhoto(event.target.files[0]);
 $("camera-photo").onchange = event => selectProgressPhoto(event.target.files[0]);
-$("clear-photo").onclick = () => { resetNewPhoto(); refreshPhotoPreview(); };
-$("remove-photo").onchange = refreshPhotoPreview;
+$("clear-photo").onclick = () => { resetNewPhoto(); refreshPhotoPreview(); checkpointProgress(); };
+$("remove-photo").onchange = () => { refreshPhotoPreview(); checkpointProgress(); };
+$("note").addEventListener("input", checkpointProgress);
+
+function checkpointProgress() {
+    if ($("session").hidden || !activeId) return;
+    const key = draftKey(activeId);
+    if (!hasUnsavedProgress()) { clearDraft(key); return; }
+    const previous = readDraft(key);
+    writeDraft(key, {
+        note: $("note").value,
+        baseVersion: previous ? previous.baseVersion : state.sessions.find(item => item.id === activeId)?.updated_at ?? null,
+        photo: selectedPhotoRef,
+        removePhoto: $("remove-photo").checked
+    });
+}
 for (const type of ["dragenter", "dragover"]) {
     $("photo-dropzone").addEventListener(type, event => {
         event.preventDefault();
@@ -1086,7 +1401,7 @@ function readPhoto(file) {
 
         if (!allowedTypes.includes(file.type) || file.size > MAX_PHOTO_BYTES) {
             reject(new Error(
-                "Choose a JPEG, PNG or WebP up to 5 MB, " +
+                "Choose a JPEG, PNG or WebP up to 5 MiB, " +
                 "or clear the photo selection to save without it."
             ));
             return;
@@ -1114,7 +1429,7 @@ function showCompletionChoice(project) {
 }
 
 function setSessionBusy(busy) {
-    for (const id of ["save-progress", "complete-task", "leave", "toggle-timer", "choose-photo", "take-photo", "clear-photo", "photo", "camera-photo", "remove-photo"]) {
+    for (const id of ["note", "save-progress", "complete-task", "leave", "toggle-timer", "choose-photo", "take-photo", "clear-photo", "photo", "camera-photo", "remove-photo"]) {
         $(id).disabled = busy;
     }
 }
@@ -1135,7 +1450,8 @@ $("progress-form").onsubmit = async event => {
         const timed = stopTimer();
         const updated = { ...timed, ...captured, updated: Date.now() };
         const result = await saveSession(updated);
-        if (result) home();
+        if (epoch !== generation) return;
+        if (result) { clearDraft(draftKey(updated.id)); home(); }
         else if (wasRunning) startTimer();
     } catch (error) {
         say(error.message, true);
@@ -1148,9 +1464,10 @@ $("progress-form").onsubmit = async event => {
 async function captureProgress(session) {
     if (photoReading) throw new Error("Your photo is still being prepared. Wait a moment, then save again.");
     let photo = $("remove-photo").checked ? "" : session.photo;
-    const file = selectedPhoto;
-    if (file && !$("remove-photo").checked) photo = await readPhoto(file);
+    if (selectedPhotoRef && !$("remove-photo").checked) photo = selectedPhotoRef;
+    const recovery = readDraft(draftKey(session.id));
     return {
+        updated_at: recovery ? recovery.baseVersion : session.updated_at,
         note: $("note").value.trim(),
         photo,
         storage_path: $("remove-photo").checked ? null : session.storage_path
@@ -1176,7 +1493,9 @@ $("complete-task").onclick = async () => {
             updated: Date.now()
         };
         const result = await saveSession(updated);
+        if (epoch !== generation) return;
         if (!result) { if (wasRunning) startTimer(); return; }
+        clearDraft(draftKey(updated.id));
         showCompletionChoice(updated);
     } catch (error) {
         say(error.message, true);
@@ -1193,6 +1512,9 @@ $("continue-project").onclick = () => {
             ? { ...task, projectElapsedSeconds: project.elapsedSeconds } : task);
     draft = {
         id: project.id,
+        nextGoal: true,
+        updated_at: project.updated_at,
+        created_at: project.created_at,
         hobby: project.hobby,
         minutes: project.minutes,
         materials: project.materials,
@@ -1209,6 +1531,7 @@ $("continue-project").onclick = () => {
     $("back").textContent = "Back to projects";
     say();
     show("goal-screen");
+    checkpointGoal();
 };
 
 $("finish-project").onclick = async () => {
@@ -1221,7 +1544,7 @@ $("finish-project").onclick = async () => {
         if (result) {
             activeId = null;
             home("gallery");
-            say("Project completed and moved to Finished.");
+            if (result === true) say("Project completed and moved to Finished.");
         }
     } finally { button.disabled = false; }
 };
@@ -1234,7 +1557,7 @@ function hasUnsavedProgress() {
 
     return (
         $("note").value.trim() !== session.note ||
-        !!selectedPhoto || photoReading ||
+        !!selectedPhotoRef || photoReading ||
         $("remove-photo").checked
     );
 }
@@ -1250,17 +1573,20 @@ $("leave").onclick = () => {
         return;
     }
 
+    const epoch = generation;
     const wasRunning = timerCheckpoint !== null;
     const updated = stopTimer();
     setSessionBusy(true);
     saveSession(updated).then(result => {
-        if (result) { home(); say(); }
+        if (epoch !== generation) return;
+        if (result) { clearDraft(draftKey(updated.id)); home(); }
         else if (wasRunning) startTimer();
     }).finally(() => setSessionBusy(false));
 };
 
 window.addEventListener("beforeunload", event => {
-    if (hasUnsavedProgress()) {
+    if (photoReading || (hasUnsavedProgress() && volatileDrafts.has(draftKey(activeId))) ||
+        (!$("goal-screen").hidden && volatileDrafts.has(draftKey()))) {
         event.preventDefault();
         event.returnValue = "";
     }
@@ -1268,8 +1594,9 @@ window.addEventListener("beforeunload", event => {
 
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-        resumeTimerOnVisible = timerCheckpoint !== null;
-        if (resumeTimerOnVisible) stopTimer();
+        const running = timerCheckpoint !== null || !!timerLockRequest;
+        if (running) stopTimer();
+        resumeTimerOnVisible = running;
     } else if (resumeTimerOnVisible) {
         resumeTimerOnVisible = false;
         startTimer();
@@ -1277,13 +1604,16 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("pagehide", () => {
-    if (timerCheckpoint !== null) stopTimer();
+    checkpointProgress();
+    checkpointGoal();
+    if (timerCheckpoint !== null || timerLockRequest) stopTimer();
 });
 
 // Avoid overwriting another tab's fallback changes. Cloud remains authoritative.
 window.addEventListener("storage", event => {
     if (event.key === cacheKey() || event.key === null) {
         blocked = true;
+        if (timerCheckpoint !== null || timerLockRequest) stopTimer();
         say("Browser data changed in another tab. Reload before saving locally; cloud saves remain available.", true);
     }
 });
@@ -1305,7 +1635,9 @@ $("auth-form").onsubmit = async event => {
 
 $("sign-out").onclick = async () => {
     if (saving) { say("Please wait for the current save to finish.", true); return; }
-    if (hasUnsavedProgress() && !confirm("Sign out and leave unsaved changes?")) return;
+    if (photoReading) { say("Wait for the photo draft to finish preparing before signing out.", true); return; }
+    checkpointProgress();
+    checkpointGoal();
     $("sign-out").disabled = true;
     try {
         const { error } = await client.auth.signOut({ scope: "local" });
@@ -1317,21 +1649,34 @@ $("sign-out").onclick = async () => {
 
 $("sync-now").onclick = async () => {
     if (!user || saving) return;
-    if (hasUnsavedProgress()) { say("Save your current edits before refreshing cloud sessions.", true); return; }
+    if (!$("session").hidden || !$("goal-screen").hidden) {
+        say("Return to Projects before refreshing cloud sessions.", true);
+        return;
+    }
     $("sync-now").disabled = true;
     try {
         const epoch = generation;
-        for (const session of [...pending()]) {
-            if (epoch !== generation || await saveSession(session) !== true) return;
+        for (const session of pending().filter(project => !project.conflict)) {
+            if (epoch !== generation) return;
+            await saveSession(session, true);
         }
         await loadCloud();
-        if (epoch === generation) landing();
+        if (epoch === generation && !$("home").hidden) landing();
     } finally { $("sync-now").disabled = false; }
 };
 
+async function stableProjectId(seed) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed));
+    const hex = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;
+}
+
 $("import-local").onclick = async () => {
     if (!user || saving) return;
-    if (hasUnsavedProgress()) { say("Save your current edits before importing local progress.", true); return; }
+    if (!$("session").hidden || !$("goal-screen").hidden) {
+        say("Return to Projects before importing guest progress.", true);
+        return;
+    }
     $("import-local").disabled = true;
     const epoch = generation;
     try {
@@ -1339,9 +1684,8 @@ $("import-local").onclick = async () => {
         // Deterministic per-account IDs make repeated imports safe, even across reloads.
         for (const session of local.sessions) {
             if (epoch !== generation) return;
-            const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${user.id}:${session.id}`));
-            const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
-            const id = `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;
+            const id = await stableProjectId(`${user.id}:${session.id}`);
+            if (epoch !== generation) return;
             if (state.sessions.some(s => s.id === id)) continue;
             // Check the server too: importing again never overwrites existing cloud work.
             const { data, error } = await client.from("sessions").select("id").eq("id", id).maybeSingle();
@@ -1349,22 +1693,20 @@ $("import-local").onclick = async () => {
             if (epoch !== generation) return;
             if (!data && await saveSession({ ...session, id, user_id: user.id }) !== true) return;
         }
-        if (epoch === generation) { await loadCloud(); landing(); say("Local progress imported. Your original guest copy remains on this browser."); }
+        if (epoch === generation) await loadCloud();
+        if (epoch === generation && !$("home").hidden) {
+            landing();
+            say("Local progress imported. Your original guest copy remains on this browser.");
+        }
     } catch (error) { say(`Import failed: ${error.message}. Your guest progress is unchanged; retry when connected.`, true); }
     finally { $("import-local").disabled = false; }
 };
 
 async function changeAccount(nextUser) {
     if ((user?.id || null) === (nextUser?.id || null)) return;
-    if (timerCheckpoint !== null) stopTimer();
-    // Preserve the current account's edited notes before an auth change resets the UI.
-    if (hasUnsavedProgress()) {
-        const session = state.sessions.find(s => s.id === activeId);
-        const next = { ...state, sessions: state.sessions.map(s => s.id === activeId
-            ? { ...session, note: $("note").value.trim(), pending: !!user, updated: Date.now() } : s) };
-        writeCache(next);
-        say("Account changed. Notes were kept in the previous browser fallback where possible. Reselect any unsaved photo after signing in again.", true);
-    }
+    if (timerCheckpoint !== null || timerLockRequest) stopTimer();
+    checkpointProgress();
+    checkpointGoal();
     generation++;
     homeTab = "projects";
     resumeTimerOnVisible = false;
@@ -1387,7 +1729,11 @@ async function changeAccount(nextUser) {
     resetNewPhoto();
     $("goal").value = "";
     landing();
-    if (user) { await loadCloud(); if (!hasUnsavedProgress() && !$("home").hidden) home(); }
+    const epoch = generation;
+    if (user) {
+        await loadCloud();
+        if (epoch === generation && !$("home").hidden) home();
+    }
 }
 
 async function initializeCloud() {

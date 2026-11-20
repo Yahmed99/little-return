@@ -83,6 +83,7 @@
       </div>
 
       <section id="panel-projects" class="tab-panel" role="tabpanel" aria-labelledby="tab-projects" tabindex="0">
+        <button id="resume-goal-draft" type="button" class="secondary" hidden>Resume goal draft</button>
         <div id="saved" class="grid" aria-label="Projects in progress"></div>
         <div id="saved-empty" class="empty">
           <h2>Start your first project</h2>
@@ -210,7 +211,7 @@
             <p id="photo-selection" class="hint" role="status" aria-live="polite">No new photo selected.</p>
             <button id="clear-photo" type="button" class="quiet" hidden>Clear new photo</button>
           </div>
-          <p id="photo-help" class="hint">JPEG, PNG or WebP. Large photos are resized to fit the 5 MB limit. A new photo replaces the previous one. On mobile, Take a photo opens your camera when supported.</p>
+          <p id="photo-help" class="hint">JPEG, PNG or WebP up to 25 MiB. Photos over 5 MiB are resized before saving. A new photo replaces the previous one. On mobile, Take a photo opens your camera when supported.</p>
           <img id="preview" alt="Your saved progress" hidden>
           <label id="remove-wrap" class="check" hidden><input id="remove-photo" type="checkbox"> Remove saved photo</label>
         </section>
